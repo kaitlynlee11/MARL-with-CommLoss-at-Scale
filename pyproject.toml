@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "limited-communication-marl"
+version = "0.1.0"
+description = "Communication scheduling experiments for cooperative particle navigation"
+requires-python = ">=3.12"
+dependencies = ["mpe2==1.1.0", "numpy>=2.0,<3", "gymnasium>=1.0,<2", "pettingzoo>=1.24,<2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+
+[project.scripts]
+marl-smoke = "limited_comm.experiment:main"
+marl-visualize = "limited_comm.visualize:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/limited_comm"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

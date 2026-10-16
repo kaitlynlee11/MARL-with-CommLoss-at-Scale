@@ -45,6 +45,21 @@ networking, or generalization.
 | Reward | Mean MPE task reward minus lambda times attempted links per agent |
 | Cost sweep | lambda = 0, 0.001, 0.01, 0.05, selected on validation seeds |
 | Coverage | Landmark has any agent within 0.1 units |
+| Current landmark layout constraint | Pairwise Euclidean center distance >= 0.4, static after reset |
+
+The October 15 rerun trains three independent policies under full, absent and
+every-five-step communication, all at zero loss and nearby-only landmark sensing.
+The same spacing rejection sampler is used in training (including curriculum),
+validation, original-environment evaluation and replay. Each condition receives
+the same fixed training budget and hyperparameters, with checkpoint selection on
+validation only and paired held-out scenarios. Results from the older unconstrained
+single-policy communication ablations answer a different question and are kept
+separately. The minimum distance is center-to-center, not a per-axis or edge-gap
+constraint. The default goal sizes and coverage threshold are unchanged.
+The completed rerun achieved 90.5% held-out success with full communication,
+81.5% with none and 91.5% with every-five-step communication (200 episodes each).
+See [spaced-navigation-results.md](spaced-navigation-results.md) for confidence
+intervals, the exact training protocol, checkpoints and replay links.
 
 The first implementation uses an absolute-coordinate mean inbox. It can hide
 which agent occupied which location and may be insufficient for coordination.
@@ -153,8 +168,29 @@ and policies retrained at each N. These answer different questions.
 5. **Study:** run seed replicates, loss/team-size sweeps and budget matching;
    plot task-success/traffic Pareto curves with uncertainty and write limitations.
 
-The immediate next implementation task is milestone 2. Do not launch a large
-sweep until trained navigation and communication usefulness are established.
+Milestone 2 is now implemented: shared-actor MAPPO, centralized critic, time-limit
+bootstrapping, PopArt value normalization, checkpoint selection, original-environment
+evaluation and trained-policy replays. Both feedforward and recurrent GRU actors
+are available. The first navigation pilot is complete: the retained GRU checkpoint
+reached 81% validation success and 76.5% success on 200 held-out full-communication
+episodes. See [navigation-results.md](navigation-results.md) for the communication
+comparison and exact training protocol. This is one exploratory training seed;
+the later study still requires independent training replicates.
+
+The navigation pilot retains nearby-only landmark sensing (radius 0.6), as
+confirmed on October 15, 2026. Recurrent memory uses past observations and does
+not provide hidden coordinates. Full communication carries sender position and
+velocity only; agents cannot directly share landmark observations through this
+initial payload. This restricts what communication can help with and should be
+revisited when designing the adaptive scheduler.
+
+Training can explicitly add coverage/success rewards and assignment-distance
+potential shaping, and anneal a near-landmark initial-state curriculum. These
+options change the training protocol and must be disclosed, along with their
+coefficients and annealing budgets. They do not change evaluation starts, sensing,
+physics, coverage threshold or reported base task reward. Communication ablations
+of one full-trained policy answer the current robustness question; separately
+trained baselines remain necessary for the later adaptive-scheduling study.
 
 ## Reading and citation follow-up
 

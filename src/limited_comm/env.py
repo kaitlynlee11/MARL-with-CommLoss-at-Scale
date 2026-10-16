@@ -11,13 +11,14 @@ from mpe2 import simple_spread_v3
 from pettingzoo import ParallelEnv
 
 from .channel import Channel
+from .layout import spaced_landmarks
 
 
 class CommunicationSpread(ParallelEnv):
     metadata = {"name": "communication_spread_v0", "render_modes": []}
 
     def __init__(self, n=3, horizon=100, loss=0.0, comm_cost=0.01,
-                 radius=0.6, neighbors=3, ttl=5, coverage_radius=0.1):
+                 radius=0.6, neighbors=3, ttl=5, coverage_radius=0.1, min_landmark_distance=0.4):
         if n < 2 or horizon < 1 or neighbors < 1 or radius <= 0 or coverage_radius <= 0:
             raise ValueError("Invalid environment dimensions or radii")
         if not 0 <= loss <= 1 or comm_cost < 0 or ttl < 1:
@@ -25,6 +26,9 @@ class CommunicationSpread(ParallelEnv):
         self.n, self.horizon, self.loss = n, horizon, loss
         self.comm_cost, self.radius, self.neighbors = comm_cost, radius, neighbors
         self.ttl, self.coverage_radius = ttl, coverage_radius
+        if not np.isfinite(min_landmark_distance) or min_landmark_distance < 0:
+            raise ValueError("min_landmark_distance must be finite and nonnegative")
+        self.min_landmark_distance = min_landmark_distance
         self.base = simple_spread_v3.parallel_env(
             N=n, max_cycles=horizon, local_ratio=0.5, dynamic_rescaling=False)
         self.possible_agents = self.base.possible_agents[:]
@@ -47,6 +51,10 @@ class CommunicationSpread(ParallelEnv):
 
     def reset(self, seed=None, options=None):
         self.base.reset(seed=seed, options=options)
+        positions = spaced_landmarks(np.asarray([l.state.p_pos for l in self.world.landmarks]),
+                                     self.base.unwrapped.np_random, self.min_landmark_distance)
+        for landmark, position in zip(self.world.landmarks, positions):
+            landmark.state.p_pos[:] = position
         self.agents = self.possible_agents[:]
         self.steps = 0
         # Independent channel RNG avoids movement/action RNG coupling.

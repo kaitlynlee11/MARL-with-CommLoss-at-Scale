@@ -10,8 +10,9 @@ import numpy as np
 from .env import CommunicationSpread
 
 
-def run_episode(n, loss, schedule, period, horizon, seed, comm_cost):
-    env = CommunicationSpread(n=n, loss=loss, horizon=horizon, comm_cost=comm_cost)
+def run_episode(n, loss, schedule, period, horizon, seed, comm_cost, min_landmark_distance=0.4):
+    env = CommunicationSpread(n=n, loss=loss, horizon=horizon, comm_cost=comm_cost,
+                              min_landmark_distance=min_landmark_distance)
     rng = np.random.default_rng(seed)
     totals = dict(broadcasts=0, attempted_links=0, delivered_links=0, payload_bytes=0,
                   collision_pairs=0, collision_steps=0, task_return=0.0, penalized_return=0.0)
@@ -54,6 +55,7 @@ def main():
     parser.add_argument("--period", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--comm-cost", type=float, default=0.01)
+    parser.add_argument("--min-landmark-distance", type=float, default=0.4)
     parser.add_argument("--output", type=Path, default=Path("results/smoke.jsonl"))
     args = parser.parse_args()
     if min(args.episodes, args.horizon, args.period) < 1:
@@ -76,7 +78,7 @@ def main():
                 for schedule in ("none", "full", "fixed"):
                     for episode in range(args.episodes):
                         record = run_episode(n, loss, schedule, args.period, args.horizon,
-                                             args.seed + episode, args.comm_cost)
+                                             args.seed + episode, args.comm_cost, args.min_landmark_distance)
                         file.write(json.dumps(record) + "\n")
                         count += 1
     print(f"Wrote {count} smoke episodes to {args.output}; no learned policies evaluated.")

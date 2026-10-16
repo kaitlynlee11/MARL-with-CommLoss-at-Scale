@@ -11,10 +11,14 @@ dependencies = ["mpe2==1.1.0", "numpy>=2.0,<3", "gymnasium>=1.0,<2", "pettingzoo
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10"]
+train = ["torch>=2.6,<3"]
 
 [project.scripts]
 marl-smoke = "limited_comm.experiment:main"
 marl-visualize = "limited_comm.visualize:main"
+marl-train = "limited_comm.train:main"
+marl-evaluate = "limited_comm.evaluate:main"
+marl-study = "limited_comm.study:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/limited_comm"]

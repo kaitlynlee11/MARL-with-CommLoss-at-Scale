@@ -50,3 +50,20 @@ def test_seeded_delivery_reproduces():
     for _ in range(5):
         assert a.advance(np.ones(4), np.ones((4, 4))) == b.advance(np.ones(4), np.ones((4, 4)))
         np.testing.assert_array_equal(a.observe(0), b.observe(0))
+
+
+def test_quarter_loss_is_sampled_per_directed_link_each_step():
+    channel = Channel(3, 0.25, 5, np.random.default_rng(123))
+    reference = np.random.default_rng(123)
+    for step in range(20):
+        # Include silent steps: their draws must still advance the channel RNG.
+        gates = np.array([step % 2, 1, int(step % 5 == 0)])
+        draws = reference.random((3, 3))
+        expected = {(receiver, sender) for sender in range(3) for receiver in range(3)
+                    if sender != receiver and gates[sender] and draws[sender, receiver] >= 0.25}
+        traffic = channel.advance(gates, np.full((3, 4), step, dtype=np.float32))
+        fresh = {key for key, (_, age) in channel.cache.items() if age == 1}
+        assert fresh == expected
+        assert traffic.delivered_links == len(expected)
+        assert traffic.attempted_links == int(gates.sum()) * 2
+        assert traffic.payload_bytes == traffic.attempted_links * 16

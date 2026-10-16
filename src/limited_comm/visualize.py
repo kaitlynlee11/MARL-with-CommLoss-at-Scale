@@ -8,16 +8,22 @@ import numpy as np
 from .env import CommunicationSpread
 
 
-def collect_replay(n, loss, horizon, period, seed):
+def collect_replay(n, loss, horizon, period, seed, model=None, radius=0.6, min_landmark_distance=0.4,
+                   models=None):
     runs = []
     for schedule in ("none", "full", "fixed"):
-        env = CommunicationSpread(n=n, loss=loss, horizon=horizon)
+        if models is not None:
+            model = models[schedule]
+        env = CommunicationSpread(n=n, loss=loss, horizon=horizon, radius=radius,
+                                  min_landmark_distance=min_landmark_distance)
         rng = np.random.default_rng(seed)
         frames = []
-        attempts = delivered = payload_bytes = 0
+        attempts = delivered = payload_bytes = total_collisions = 0
         task_return = 0.0
         try:
-            env.reset(seed=seed)
+            observations, _ = env.reset(seed=seed)
+            if model is not None:
+                model.reset_memory()
 
             def snapshot(links, sent):
                 return {"agents": [a.state.p_pos.tolist() for a in env.world.agents],
@@ -26,18 +32,22 @@ def collect_replay(n, loss, horizon, period, seed):
                         "coverage_radius": env.coverage_radius,
                         "links": links, "sent": sent, "attempts": attempts,
                         "delivered": delivered, "payload_bytes": payload_bytes,
-                        "task_return": task_return, **env.diagnostics()}
+                        "task_return": task_return, "total_collisions": total_collisions,
+                        **env.diagnostics()}
 
             frames.append(snapshot([], False))
             for t in range(horizon):
                 gate = int(schedule == "full" or (schedule == "fixed" and t % period == 0))
-                actions = {a: np.asarray([rng.integers(5), gate]) for a in env.agents}
-                _, _, _, _, infos = env.step(actions)
+                moves = (rng.integers(5, size=n) if model is None else
+                         model.moves(np.stack([observations[a] for a in env.possible_agents])))
+                actions = {a: np.asarray([moves[i], gate]) for i, a in enumerate(env.agents)}
+                observations, _, _, _, infos = env.step(actions)
                 info = infos[env.possible_agents[0]]
                 attempts += info["attempted_links"]
                 delivered += info["delivered_links"]
                 payload_bytes += info["payload_bytes"]
                 task_return += info["task_reward"]
+                total_collisions += info["collision_pairs"]
                 # Cache age 1 identifies packets delivered on this step, not older cached packets.
                 links = [[sender, receiver] for (receiver, sender), (_, age)
                          in env.channel.cache.items() if age == 1]
@@ -48,7 +58,10 @@ def collect_replay(n, loss, horizon, period, seed):
     extent = max(abs(coordinate) for run in runs for frame in run["frames"]
                  for point in frame["agents"] + frame["landmarks"] for coordinate in point)
     return {"n": n, "loss": loss, "horizon": horizon, "period": period, "seed": seed,
-            "bounds": max(1.2, extent + 0.25), "runs": runs}
+            "bounds": max(1.2, extent + 0.25), "runs": runs, "radius": radius,
+            "policy": "random" if model is None else "trained_mappo",
+            "bytes_per_packet": 16, "min_landmark_distance": min_landmark_distance,
+            "separately_trained": models is not None}
 
 
 def main():
@@ -58,13 +71,25 @@ def main():
     parser.add_argument("--horizon", type=int, default=100)
     parser.add_argument("--period", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--checkpoint", type=Path, help="Replay a trained MAPPO policy instead of random movement")
+    parser.add_argument("--min-landmark-distance", type=float, default=0.4)
     parser.add_argument("--output", type=Path, default=Path("results/demo.html"))
     args = parser.parse_args()
     if args.agents < 2 or not 0 <= args.loss <= 1 or min(args.horizon, args.period) < 1:
         parser.error("require agents >= 2, loss in [0, 1], horizon and period >= 1")
     if args.output.exists():
         parser.error("output already exists; choose a new --output filename")
-    replay = collect_replay(args.agents, args.loss, args.horizon, args.period, args.seed)
+    model, radius, spacing = None, 0.6, args.min_landmark_distance
+    if args.checkpoint:
+        from .mappo import load_policy
+        import torch
+        torch.set_num_threads(1)
+        model, checkpoint = load_policy(args.checkpoint)
+        if args.agents != 3:
+            parser.error("this checkpoint supports the three-agent experiment only")
+        radius = checkpoint["config"]["radius"]
+        spacing = checkpoint["config"].get("min_landmark_distance", 0.0)
+    replay = collect_replay(args.agents, args.loss, args.horizon, args.period, args.seed, model, radius, spacing)
     # Embedding is safe even if future metadata contains a closing script tag.
     serialized = json.dumps(replay, allow_nan=False).replace("<", "\\u003c")
     html = HTML.replace("__REPLAY_DATA__", serialized)
@@ -72,7 +97,7 @@ def main():
     with args.output.open("x", encoding="utf-8") as file:
         file.write(html)
     print(f"Replay saved to {args.output.resolve()}")
-    print("Open this HTML file in a browser. Movement is random; no learning is shown.")
+    print("Open this HTML file in a browser. Policy: " + replay["policy"])
 
 
 HTML = r"""<!doctype html>
@@ -96,7 +121,7 @@ canvas{display:block;width:100%;aspect-ratio:1;background:#fafcff}.stats{display
 <body><main>
 <h1>Watch communication schedules</h1>
 <p class="muted" id="config"></p>
-<p>All three teams make the same random movements. Change the frame to see how communication traffic differs.</p>
+<p id="policy-description">Change the frame to compare the schedules.</p>
 <div class="controls">
 <button id="play">Play</button><button id="step">Step</button><button id="reset">Reset</button>
 <label for="timeline">Frame</label><input id="timeline" type="range" min="0" value="0"><output id="frame-label"></output>
@@ -107,9 +132,9 @@ canvas{display:block;width:100%;aspect-ratio:1;background:#fafcff}.stats{display
 <div class="grid" id="panels"></div>
 <div class="legend"><span>🔵 Numbered circles: agents</span><span>◇ Diamonds: landmarks</span><span style="color:#167948">Green landmark: covered</span><span style="color:#177eba">Solid arrow: delivered packet</span><span style="color:#b25462">Dashed arrow: dropped packet</span></div>
 <div class="notes muted">
-<p>Arrows show packets from the previous action arriving at the current frame. For readability, they connect the agents' current positions. Messages contain the sender's position and velocity before movement. Arrows disappear on silent steps; older messages can remain cached for five steps.</p>
-<p>Coverage means an agent is within 0.1 units of a landmark. Collision pairs count agents whose circles overlap in this frame. Traffic and task return are cumulative; task return excludes communication penalties. Each directed packet contains 16 payload bytes, excluding headers.</p>
-<p><strong>This is a smoke replay, not a learned policy.</strong> Navigation ignores messages, so coverage, collisions and task return match across schedules. The viewer shows the full world for explanation; individual agents have limited sensing.</p>
+<p id="message-note"></p>
+<p>Coverage means an agent is within 0.1 units of a landmark. Collision pairs count agents whose circles overlap in this frame. Total collisions sums overlapping pairs after each action through the current step; continued overlap counts again each step, and initial-frame overlaps are excluded. Traffic and task return are cumulative; task return excludes communication penalties. <span id="packet-note"></span></p>
+<p id="policy-note"></p>
 </div>
 </main>
 <script id="replay-data" type="application/json">__REPLAY_DATA__</script>
@@ -121,14 +146,18 @@ const colors=['#2866cc','#8b51bf','#d47b17','#008778','#bd4d76','#576b91'];
 let frame=0,playing=false,last=0;
 const slider=document.getElementById('timeline'),play=document.getElementById('play');
 slider.max=data.horizon;
-document.getElementById('config').textContent=`${data.n} agents · ${Math.round(data.loss*100)}% packet loss per link · seed ${data.seed} · ${data.horizon} steps`;
+document.getElementById('config').textContent=`${data.n} agents · ${Math.round(data.loss*100)}% packet loss per link · seed ${data.seed} · ${data.horizon} steps · nearby landmarks only · landmark spacing ≥ ${data.min_landmark_distance??0}`;
+document.getElementById('policy-description').textContent=data.separately_trained?'Three separately trained MAPPO policies, each evaluated under its own communication schedule. All panels start from the same world.':data.policy==='trained_mappo'?'One full-communication-trained MAPPO policy, evaluated with three communication schedules. All panels start from the same world.':'All three teams make the same random movements. Change the frame to see how communication traffic differs.';
+document.getElementById('policy-note').textContent=(data.policy==='trained_mappo'?'Actions come from the trained actor using local sensing and received messages. '+(data.separately_trained?'Each panel uses its own checkpoint.':'The same checkpoint is used in all panels.'):'This is a smoke replay, not a learned policy. Navigation ignores messages, so coverage, collisions and task return match across schedules.')+' The viewer shows the full world for explanation; individual agents have limited sensing.';
+document.getElementById('message-note').textContent='Arrows show packets arriving from the previous action, connecting current agent positions for readability. Messages contain sender position and velocity. Arrows disappear on silent steps; cached messages expire after five steps. A recurrent actor can remember prior observations.';
+document.getElementById('packet-note').textContent=`Each directed packet contains ${data.bytes_per_packet} payload bytes, excluding headers.`;
 const panels=data.runs.map(run=>{
  const panel=document.createElement('section');panel.className='panel';
  const title=document.createElement('h2');title.textContent=names[run.schedule];panel.append(title);
  const desc=document.createElement('p');desc.className='description';desc.textContent=descriptions[run.schedule];panel.append(desc);
  const canvas=document.createElement('canvas');canvas.width=600;canvas.height=600;canvas.setAttribute('aria-label',names[run.schedule]+' navigation replay');panel.append(canvas);
  const stats=document.createElement('div');stats.className='stats';panel.append(stats);
- const fields=[['coverage','Coverage'],['collision_pairs','Collision pairs now'],['attempts','Attempted packets'],['delivered','Delivered packets'],['payload_bytes','Payload bytes sent'],['task_return','Task return']];
+ const fields=[['coverage','Coverage'],['collision_pairs','Collision pairs now'],['total_collisions','Total collisions (so far)'],['attempts','Attempted packets'],['delivered','Delivered packets'],['payload_bytes','Payload bytes sent'],['task_return','Task return']];
  const values={};fields.forEach(([key,label])=>{const box=document.createElement('div');box.textContent=label;const val=document.createElement('strong');box.append(val);stats.append(box);values[key]=val;});
  document.getElementById('panels').append(panel);return {run,canvas,values};
 });
@@ -149,7 +178,7 @@ function draw({run,canvas,values}){
   ctx.beginPath();ctx.moveTo(...xy([v,-data.bounds]));ctx.lineTo(...xy([v,data.bounds]));ctx.stroke();
   ctx.beginPath();ctx.moveTo(...xy([-data.bounds,v]));ctx.lineTo(...xy([data.bounds,v]));ctx.stroke();
  }
- if(document.getElementById('sensing').checked)f.agents.forEach(p=>{const [x,y]=xy(p);ctx.beginPath();ctx.arc(x,y,0.6*scale,0,2*Math.PI);ctx.fillStyle='#2866cc09';ctx.fill();ctx.strokeStyle='#2866cc33';ctx.stroke();});
+ if(document.getElementById('sensing').checked)f.agents.forEach(p=>{const [x,y]=xy(p);ctx.beginPath();ctx.arc(x,y,data.radius*scale,0,2*Math.PI);ctx.fillStyle='#2866cc09';ctx.fill();ctx.strokeStyle='#2866cc33';ctx.stroke();});
  f.landmarks.forEach((p,i)=>{
   const covered=f.agents.some(a=>Math.hypot(a[0]-p[0],a[1]-p[1])<=f.coverage_radius),[x,y]=xy(p);
   ctx.beginPath();ctx.arc(x,y,f.coverage_radius*scale,0,2*Math.PI);ctx.strokeStyle=covered?'#229660':'#bdc8d9';ctx.stroke();

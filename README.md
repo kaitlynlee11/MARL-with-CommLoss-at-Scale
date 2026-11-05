@@ -26,6 +26,10 @@ an equal-budget continuation. It reduced measured collisions on matched and fres
 test scenarios; coverage improvement was mixed. The method and limitations are
 in [the experiment notes](docs/paper-guided-optimization.md).
 
+The [10% packet-loss evaluation](docs/paper-guided-loss10-results.md) tests those
+three frozen checkpoints on 400 scenarios each, preserving the collision rule
+and 600-packet denominator, with zero-loss comparisons and replay demos.
+
 ## Agent starting separation
 
 New environments require every agent center to start at least **0.4 units**

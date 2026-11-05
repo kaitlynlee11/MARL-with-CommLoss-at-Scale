@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from .env import CommunicationSpread
+from .rewards import TASK_REWARD_VERSION
 from .mappo import load_policy
 from .layout import minimum_separation
 from .schedules import transmit
@@ -22,9 +23,10 @@ def wilson(successes, count):
 
 
 def evaluate_episode(model, seed, schedule, period=5, loss=0.0, horizon=100, radius=0.6, random=False,
-                     min_landmark_distance=0.4):
+                     min_landmark_distance=0.4, terminate_on_collision=False, min_agent_distance=0.4):
     env = CommunicationSpread(horizon=horizon, radius=radius, loss=loss, comm_cost=0.0,
-                              min_landmark_distance=min_landmark_distance)
+                              min_landmark_distance=min_landmark_distance,
+                              terminate_on_collision=terminate_on_collision, min_agent_distance=min_agent_distance)
     rng = np.random.default_rng(seed)
     attempts = delivered = collisions = collision_steps = payload_bytes = 0
     task_return = 0.0
@@ -34,12 +36,28 @@ def evaluate_episode(model, seed, schedule, period=5, loss=0.0, horizon=100, rad
         actual_separation = float(minimum_separation(np.asarray([l.state.p_pos for l in env.world.landmarks])))
         if actual_separation < min_landmark_distance:
             raise AssertionError("Evaluation layout violates minimum landmark distance")
+        actual_agent_separation = float(minimum_separation(np.asarray([a.state.p_pos for a in env.world.agents])))
+        if actual_agent_separation < min_agent_distance:
+            raise AssertionError("Evaluation start violates minimum agent distance")
         model.reset_memory()
-        for t in range(horizon):
-            moves = rng.integers(5, size=3) if random else model.moves(np.stack([obs[a] for a in env.possible_agents]))
-            gate = transmit(schedule, t, period)
-            obs, _, _, _, infos = env.step({a: np.asarray([moves[i], gate]) for i, a in enumerate(env.possible_agents)})
+        info = env.diagnostics()
+        initial_collision = info["collision_pairs"] > 0
+        active_steps = 0
+        collided = bool(initial_collision) if terminate_on_collision else False
+        if terminate_on_collision and initial_collision:
+            collisions = info["collision_pairs"]
+        for t in range(0 if terminate_on_collision and initial_collision else horizon):
+            if schedule == "adaptive":
+                if not model.spec.get("adaptive") or random:
+                    raise ValueError("adaptive evaluation requires a learned transmit policy")
+                moves, gates = model.actions(np.stack([obs[a] for a in env.possible_agents]))
+            else:
+                moves = rng.integers(5, size=3) if random else model.moves(np.stack([obs[a] for a in env.possible_agents]))
+                gates = np.full(3, transmit(schedule, t, period))
+            obs, _, _, _, infos = env.step({a: np.asarray([moves[i], gates[i]]) for i, a in enumerate(env.possible_agents)})
             info = infos[env.possible_agents[0]]
+            active_steps = t + 1
+            collided |= info["collision_pairs"] > 0
             attempts += info["attempted_links"]
             delivered += info["delivered_links"]
             payload_bytes += info["payload_bytes"]
@@ -48,13 +66,24 @@ def evaluate_episode(model, seed, schedule, period=5, loss=0.0, horizon=100, rad
             task_return += info["task_reward"]
             if info["success"] and first_success is None:
                 first_success = t + 1
+            if terminate_on_collision and collided:
+                break
+        final_success = bool(info["success"] and (not terminate_on_collision or
+                                                   (not collided and active_steps == horizon)))
         return {"seed": seed, "schedule": schedule, "period": period, "loss": loss,
-                "random": random, "final_success": info["success"], "final_coverage": info["coverage"],
+                "random": random, "final_success": final_success, "final_coverage": info["coverage"],
                 "min_landmark_distance": min_landmark_distance, "actual_min_separation": actual_separation,
+                "min_agent_distance": min_agent_distance, "actual_initial_agent_separation": actual_agent_separation,
                 "first_success_step": first_success, "mean_landmark_distance": info["mean_landmark_distance"],
-                "task_return": task_return, "attempted_links": attempts, "delivered_links": delivered,
+                "task_return": task_return, "task_reward_version": TASK_REWARD_VERSION,
+                "attempted_links": attempts, "delivered_links": delivered,
                 "payload_bytes": payload_bytes, "collision_pairs": collisions,
-                "collision_step_rate": collision_steps / horizon}
+                "collision_step_rate": collision_steps / horizon,
+                "terminate_on_collision": terminate_on_collision,
+                "initial_collision": bool(initial_collision), "any_collision": bool(collided),
+                "active_steps": active_steps, "terminated_by_collision": bool(terminate_on_collision and collided),
+                "packet_ratio_fixed_denominator": attempts / (6 * horizon),
+                "attempts_per_active_step": attempts / active_steps if active_steps else None}
     finally:
         env.close()
 
@@ -88,7 +117,8 @@ def render_report(result):
     lines.extend(["", "Policy evaluated under its own training schedule." if matching else
                   f"All learned-policy rows use the same {training_schedule}-communication-trained checkpoint. The random_full row uses random movement as a reference.",
                   "Intervals quantify evaluation-episode uncertainty for this checkpoint; they do not measure variation across training seeds.",
-                  "This is not an adaptive scheduler study."])
+                  "Adaptive movement and transmission are learned jointly." if training_schedule == "adaptive" else
+                  "Communication schedules are externally fixed."])
     return "\n".join(lines) + "\n"
 
 
@@ -99,8 +129,10 @@ def main():
     parser.add_argument("--seed", type=int, default=200_000)
     parser.add_argument("--periods", type=int, nargs="+", default=[2, 5, 10])
     parser.add_argument("--loss", type=float, default=0.0)
+    parser.add_argument("--terminate-on-collision", action="store_true")
     parser.add_argument("--trained-schedule-only", action="store_true", help="Evaluate under this checkpoint's own training schedule")
     parser.add_argument("--output", type=Path, default=Path("results/mappo-evaluation"))
+    parser.add_argument("--min-agent-distance", type=float, default=0.4)
     args = parser.parse_args()
     if args.episodes < 1 or min(args.periods) < 1 or not 0 <= args.loss <= 1:
         parser.error("require positive episodes/periods and loss in [0, 1]")
@@ -109,7 +141,7 @@ def main():
     model, checkpoint = load_policy(args.checkpoint)
     conditions = [("full", "full", 1, False), *[(f"fixed_{p}", "fixed", p, False) for p in args.periods],
                   ("none", "none", 1, False), ("random_full", "full", 1, True)]
-    if args.trained_schedule_only:
+    if args.trained_schedule_only or model.spec.get("adaptive"):
         schedule = checkpoint["config"].get("training_schedule", "full")
         period = checkpoint["config"].get("period", 5)
         label = f"fixed_{period}" if schedule == "fixed" else schedule
@@ -121,14 +153,15 @@ def main():
             for i in range(args.episodes):
                 record = evaluate_episode(model, args.seed + i, schedule, period, args.loss,
                                           checkpoint["config"]["horizon"], checkpoint["config"]["radius"], random,
-                                          checkpoint["config"].get("min_landmark_distance", 0.0))
+                                          checkpoint["config"].get("min_landmark_distance", 0.0),
+                                          terminate_on_collision=args.terminate_on_collision, min_agent_distance=args.min_agent_distance)
                 records.append(record)
                 file.write(json.dumps({"condition": label, **record}) + "\n")
             summaries[label] = summarize(records)
             print(label, json.dumps(summaries[label]), flush=True)
     result = {"checkpoint": str(args.checkpoint.resolve()), "checkpoint_steps": checkpoint["steps"],
               "checkpoint_sha256": hashlib.sha256(args.checkpoint.read_bytes()).hexdigest(),
-              "seed_start": args.seed, "loss": args.loss, "deterministic_actions": True,
+              "seed_start": args.seed, "loss": args.loss, "min_agent_distance": args.min_agent_distance, "deterministic_actions": True,
               "training_config": checkpoint["config"], "conditions": summaries,
               "evaluation_mode": "trained_schedule_only" if args.trained_schedule_only else "communication_ablations",
               "scope": "own training schedule" if args.trained_schedule_only else

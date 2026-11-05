@@ -8,11 +8,12 @@ from pathlib import Path
 import numpy as np
 
 from .env import CommunicationSpread
+from .rewards import TASK_REWARD_VERSION
 
 
-def run_episode(n, loss, schedule, period, horizon, seed, comm_cost, min_landmark_distance=0.4):
+def run_episode(n, loss, schedule, period, horizon, seed, comm_cost, min_landmark_distance=0.4, min_agent_distance=0.4):
     env = CommunicationSpread(n=n, loss=loss, horizon=horizon, comm_cost=comm_cost,
-                              min_landmark_distance=min_landmark_distance)
+                              min_landmark_distance=min_landmark_distance, min_agent_distance=min_agent_distance)
     rng = np.random.default_rng(seed)
     totals = dict(broadcasts=0, attempted_links=0, delivered_links=0, payload_bytes=0,
                   collision_pairs=0, collision_steps=0, task_return=0.0, penalized_return=0.0)
@@ -37,7 +38,8 @@ def run_episode(n, loss, schedule, period, horizon, seed, comm_cost, min_landmar
                 break
         steps = env.steps
         return {"n": n, "loss": loss, "schedule": schedule, "seed": seed,
-                "steps": steps, **totals, "final_success": info["success"],
+                "steps": steps, **totals, "task_reward_version": TASK_REWARD_VERSION,
+                "final_success": info["success"],
                 "first_success_step": first_success, "final_coverage": info["coverage"],
                 "collision_step_rate": totals["collision_steps"] / steps,
                 "collision_pair_rate": totals["collision_pairs"] / (steps * n * (n - 1) / 2),
@@ -57,6 +59,7 @@ def main():
     parser.add_argument("--comm-cost", type=float, default=0.01)
     parser.add_argument("--min-landmark-distance", type=float, default=0.4)
     parser.add_argument("--output", type=Path, default=Path("results/smoke.jsonl"))
+    parser.add_argument("--min-agent-distance", type=float, default=0.4)
     args = parser.parse_args()
     if min(args.episodes, args.horizon, args.period) < 1:
         parser.error("episodes, horizon and period must be positive")
@@ -78,7 +81,7 @@ def main():
                 for schedule in ("none", "full", "fixed"):
                     for episode in range(args.episodes):
                         record = run_episode(n, loss, schedule, args.period, args.horizon,
-                                             args.seed + episode, args.comm_cost, args.min_landmark_distance)
+                                             args.seed + episode, args.comm_cost, args.min_landmark_distance, args.min_agent_distance)
                         file.write(json.dumps(record) + "\n")
                         count += 1
     print(f"Wrote {count} smoke episodes to {args.output}; no learned policies evaluated.")

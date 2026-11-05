@@ -5,12 +5,44 @@ whether learned communication timing improves the tradeoff between coordination
 and communication cost as teams grow and messages are lost.
 
 **Current milestone:** environment, channel, smoke runs, MAPPO navigation training,
-checkpoint evaluation and replay. The transmit schedule is externally fixed;
-a learned adaptive scheduler is not implemented yet. Smoke runs remain random.
+checkpoint evaluation and replay. Fixed-schedule baselines are retained. A warm-start recurrent MAPPO adaptive
+scheduler now learns movement and transmission jointly under 25% packet loss;
+see [adaptive scheduler training](docs/adaptive-scheduler.md) for its objective,
+strict stopping targets, current run, and evaluation protocol. Smoke runs remain random.
+
+The [collision-terminated zero-loss comparison](docs/collision-zero-loss-study.md)
+first evaluates the frozen adaptive, fixed-five-step and full policies, then
+retrains all three for collision-free final coverage with matched budgets.
+It reports collision episodes, attempts per scheduled episode and per active
+step, and steps before termination.
 
 The latest separately trained baselines and replays are documented in
 [spaced-landmark results](docs/spaced-navigation-results.md). The earlier
 unconstrained, single-policy ablations remain in [navigation results](docs/navigation-results.md).
+
+The [paper-guided optimization follow-up](docs/paper-guided-optimization-results.md)
+tests modular scheduler/behavior updates and collision-risk optimization against
+an equal-budget continuation. It reduced measured collisions on matched and fresh
+test scenarios; coverage improvement was mixed. The method and limitations are
+in [the experiment notes](docs/paper-guided-optimization.md).
+
+## Agent starting separation
+
+New environments require every agent center to start at least **0.4 units**
+from every other agent center, measured by Euclidean distance in any direction.
+Invalid complete agent layouts are resampled uniformly in the original [-1,1]
+square. This applies to training, partial resets, curriculum starts, evaluation
+and replay. Landmark spacing remains 0.4; agent-to-landmark separation has no
+new constraint. Agents may move closer after reset; physics and the 0.3-unit
+agent collision threshold are unchanged.
+
+The default is `--min-agent-distance 0.4`. Use `--min-agent-distance 0` explicitly
+to reproduce unrestricted historical agent starts. New checkpoint configurations
+and evaluation records store this setting, and resume checks prevent silently
+changing it. Historical reports and saved trajectories retain their original
+setup. The previous filtering of reset collisions used the 0.3 collision threshold;
+it is not equivalent to the new 0.4 starting-distance distribution. The [completed full rerun](docs/collision-zero-loss-agent-spacing04-results.md)
+reports frozen-policy testing and matched-budget retraining under the new setup.
 
 ## Retrain with spaced landmarks
 
@@ -198,7 +230,11 @@ excluding headers, and bytes per simulator step rather than physical bits/second
 Inbox pooling bounds policy input size; it does not reduce network fanout or
 simulation complexity.
 
-All actors receive the mean base task reward minus `comm_cost * attempted_links / N`.
+All actors receive the shared task reward minus `comm_cost * attempted_links / N`.
+The distance penalty is zero while all landmarks are covered; collision costs
+remain. Task return therefore stays constant during collision-free full coverage,
+and distance costs resume if coverage is lost. Reaching coverage does not end an
+episode. See [task-return semantics and historical scoring](docs/task-return.md).
 The centralized `state()` method exposes privileged physical state; the training
 critic also receives the pooled inboxes. These critic inputs grow with N. A
 critic suitable for transfer across team sizes remains to be implemented.

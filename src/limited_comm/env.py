@@ -11,23 +11,28 @@ from mpe2 import simple_spread_v3
 from pettingzoo import ParallelEnv
 
 from .channel import Channel
-from .layout import spaced_landmarks
+from .layout import spaced_landmarks, spaced_agents
+from .rewards import TASK_REWARD_VERSION, task_reward
 
 
 class CommunicationSpread(ParallelEnv):
     metadata = {"name": "communication_spread_v0", "render_modes": []}
 
     def __init__(self, n=3, horizon=100, loss=0.0, comm_cost=0.01,
-                 radius=0.6, neighbors=3, ttl=5, coverage_radius=0.1, min_landmark_distance=0.4):
+                 radius=0.6, neighbors=3, ttl=5, coverage_radius=0.1, min_landmark_distance=0.4, terminate_on_collision=False, min_agent_distance=0.4):
         if n < 2 or horizon < 1 or neighbors < 1 or radius <= 0 or coverage_radius <= 0:
             raise ValueError("Invalid environment dimensions or radii")
         if not 0 <= loss <= 1 or comm_cost < 0 or ttl < 1:
             raise ValueError("Invalid channel parameters")
+        self.terminate_on_collision = terminate_on_collision
         self.n, self.horizon, self.loss = n, horizon, loss
         self.comm_cost, self.radius, self.neighbors = comm_cost, radius, neighbors
         self.ttl, self.coverage_radius = ttl, coverage_radius
         if not np.isfinite(min_landmark_distance) or min_landmark_distance < 0:
             raise ValueError("min_landmark_distance must be finite and nonnegative")
+        if not np.isfinite(min_agent_distance) or min_agent_distance < 0:
+            raise ValueError("min_agent_distance must be finite and nonnegative")
+        self.min_agent_distance = min_agent_distance
         self.min_landmark_distance = min_landmark_distance
         self.base = simple_spread_v3.parallel_env(
             N=n, max_cycles=horizon, local_ratio=0.5, dynamic_rescaling=False)
@@ -55,6 +60,10 @@ class CommunicationSpread(ParallelEnv):
                                      self.base.unwrapped.np_random, self.min_landmark_distance)
         for landmark, position in zip(self.world.landmarks, positions):
             landmark.state.p_pos[:] = position
+        starts = spaced_agents(np.asarray([a.state.p_pos for a in self.world.agents]),
+                               self.base.unwrapped.np_random, self.min_agent_distance)
+        for agent, position in zip(self.world.agents, starts):
+            agent.state.p_pos[:] = position
         self.agents = self.possible_agents[:]
         self.steps = 0
         # Independent channel RNG avoids movement/action RNG coupling.
@@ -112,18 +121,28 @@ class CommunicationSpread(ParallelEnv):
         payloads = np.asarray([np.concatenate([a.state.p_pos, a.state.p_vel])
                                for a in self.world.agents], dtype=np.float32)
         traffic = self.channel.advance(gates, payloads)
-        _, rewards, terminated, truncated, _ = self.base.step({a: int(actions[a][0]) for a in active})
+        _, _, terminated, truncated, _ = self.base.step({a: int(actions[a][0]) for a in active})
         self.steps += 1
         observations = self._observations()
         diagnostics = self.diagnostics()
         # Charge attempted transmissions including packets lost in transit; shared team objective.
         penalty = self.comm_cost * traffic.attempted_links / self.n
-        team_task_reward = float(np.mean(list(rewards.values())))
+        team_task_reward = float(task_reward(
+            diagnostics["mean_landmark_distance"] * self.n,
+            diagnostics["collision_pairs"], diagnostics["success"], self.n))
         rewards = {a: team_task_reward - penalty for a in active}
         info = {**diagnostics, "task_reward": team_task_reward,
+                "task_reward_version": TASK_REWARD_VERSION,
                 "communication_penalty": penalty, **vars(traffic)}
+        if self.terminate_on_collision and diagnostics["collision_pairs"] > 0:
+            terminated = {a: True for a in active}
+            truncated = {a: False for a in active}
+            info["success"] = False
+            info["terminated_by_collision"] = True
+            self.agents = []
+        else:
+            self.agents = self.base.agents[:]
         infos = {a: info.copy() for a in active}
-        self.agents = self.base.agents[:]
         return observations, rewards, terminated, truncated, infos
 
     def close(self):

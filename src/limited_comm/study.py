@@ -29,7 +29,7 @@ def child(command, logfile):
 def train_condition(label, schedule, root, args):
     directory = root / label
     directory.mkdir()
-    common = ["--schedule", schedule, "--period", "5", "--min-landmark-distance", str(args.min_landmark_distance),
+    common = ["--schedule", schedule, "--period", "5", "--min-landmark-distance", str(args.min_landmark_distance), "--min-agent-distance", str(args.min_agent_distance),
               "--seed", str(args.training_seed), "--threads", "1", "--recurrent", "--hidden", "64",
               "--eval-every", "50", "--no-early-stop", "--coverage-bonus", "1", "--potential-scale", "5"]
     initial = directory / "initial"
@@ -59,7 +59,7 @@ def train_condition(label, schedule, root, args):
     (directory / "selection.json").write_text(json.dumps(selection, indent=2), encoding="utf-8")
     print(json.dumps({"condition": label, "phase": "evaluation", "validation": selected["validation"]}), flush=True)
     child(["-m", "limited_comm.evaluate", str(destination), "--trained-schedule-only", "--episodes", str(args.episodes),
-           "--seed", str(args.test_seed), "--loss", "0", "--output", str(directory / "evaluation")],
+           "--seed", str(args.test_seed), "--loss", "0", "--min-agent-distance", str(args.min_agent_distance), "--output", str(directory / "evaluation")],
           directory / "evaluation.console.log")
     return label, selection
 
@@ -78,7 +78,7 @@ def finalize(root, args, selections, seconds):
         records.extend(rows)
         models[schedule] = load_policy(directory / "best.pt")[0]
     (root / "episodes.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
-    result = {"conditions": summaries, "selections": selections, "min_landmark_distance": args.min_landmark_distance,
+    result = {"conditions": summaries, "selections": selections, "min_landmark_distance": args.min_landmark_distance, "min_agent_distance": args.min_agent_distance,
               "loss": 0.0, "radius": 0.6, "horizon": 100, "episodes_per_condition": args.episodes,
               "training_seed": args.training_seed, "test_seed_start": args.test_seed,
               "scope": "three independently trained policies, each evaluated under its training schedule",
@@ -91,7 +91,7 @@ def finalize(root, args, selections, seconds):
     if common_success:
         replay_seeds["all-success.html"] = min(common_success)
     for filename, seed in replay_seeds.items():
-        replay = collect_replay(3, 0.0, 100, 5, seed, min_landmark_distance=args.min_landmark_distance, models=models)
+        replay = collect_replay(3, 0.0, 100, 5, seed, min_landmark_distance=args.min_landmark_distance, models=models, min_agent_distance=args.min_agent_distance)
         for run in replay["runs"]:
             record = next(r for r in records if r["seed"] == seed and r["schedule"] == run["schedule"])
             assert run["frames"][-1]["success"] == record["final_success"]
@@ -139,7 +139,10 @@ def main():
     parser.add_argument("--training-seed", type=int, default=42)
     parser.add_argument("--test-seed", type=int, default=400_000)
     parser.add_argument("--min-landmark-distance", type=float, default=0.4)
+    parser.add_argument("--min-agent-distance", type=float, default=0.4)
     args = parser.parse_args()
+    if not np.isfinite(args.min_agent_distance) or args.min_agent_distance < 0:
+        parser.error("min-agent-distance must be finite and nonnegative")
     if (min(args.initial_steps, args.refine_steps, args.episodes) < 1 or args.initial_steps % 6400
             or args.refine_steps % 6400 or not np.isfinite(args.min_landmark_distance) or args.min_landmark_distance < 0):
         parser.error("positive budgets divisible by 6400, positive episodes and valid spacing are required")

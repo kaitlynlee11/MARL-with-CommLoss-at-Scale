@@ -5,15 +5,19 @@ Evaluation still uses the original PettingZoo adapter. Tests check parity.
 """
 import numpy as np
 from itertools import permutations
-from .layout import spaced_landmarks
+from .layout import spaced_landmarks, spaced_agents
+from .rewards import task_reward
 
 
 class VectorSpread:
     def __init__(self, batch=64, n=3, horizon=100, radius=0.6, neighbors=3,
-                 ttl=5, loss=0.0, comm_cost=0.0, seed=42, min_landmark_distance=0.4):
+                 ttl=5, loss=0.0, comm_cost=0.0, seed=42, min_landmark_distance=0.4, min_agent_distance=0.4):
         self.batch, self.n, self.horizon = batch, n, horizon
         self.radius, self.neighbors, self.ttl = radius, neighbors, ttl
         self.loss, self.comm_cost = loss, comm_cost
+        if not np.isfinite(min_agent_distance) or min_agent_distance < 0:
+            raise ValueError("min_agent_distance must be finite and nonnegative")
+        self.min_agent_distance = min_agent_distance
         self.min_landmark_distance = min_landmark_distance
         seeds = np.random.SeedSequence(seed).spawn(2)
         self.rng, self.channel_rng = [np.random.default_rng(s) for s in seeds]
@@ -31,6 +35,7 @@ class VectorSpread:
         self.vel.fill(0)
         self.landmarks[:] = self.rng.uniform(-1, 1, self.landmarks.shape)
         self.landmarks[:] = spaced_landmarks(self.landmarks, self.rng, self.min_landmark_distance)
+        self.pos[:] = spaced_agents(self.pos, self.rng, self.min_agent_distance)
         self.cache.fill(0)
         self.age.fill(self.ttl + 1)
         self.steps = 0
@@ -107,7 +112,11 @@ class VectorSpread:
         self.vel = self.vel * 0.75 + (5 * movement + force) * 0.1
         self.steps += 1
         diagnostics = self.diagnostics()
-        # local_ratio=0.5: half global distance reward, half mean local collision reward.
-        reward = -0.5 * diagnostics["distance_sum"] - diagnostics["collision_pairs"] / self.n
+        diagnostics["attempted_links"] = np.asarray(gates).sum(axis=1) * (self.n - 1)
+        diagnostics["delivered_links"] = delivered.sum(axis=(1, 2))
+        # Distance cost stops at full coverage; collision/communication costs remain.
+        reward = task_reward(diagnostics["distance_sum"], diagnostics["collision_pairs"],
+                             diagnostics["success"], self.n)
+        diagnostics["task_reward"] = reward.copy()
         reward -= self.comm_cost * np.asarray(gates).sum(axis=1) * (self.n - 1) / self.n
         return self.observe(), self.state(), reward.astype(np.float32), self.steps >= self.horizon, diagnostics

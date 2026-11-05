@@ -17,11 +17,12 @@ def mlp(inputs, outputs, hidden):
 
 
 class RecurrentActor(nn.Module):
-    def __init__(self, inputs, hidden):
+    def __init__(self, inputs, hidden, outputs=5):
         super().__init__()
         self.encode = nn.Sequential(nn.Linear(inputs, hidden), nn.Tanh())
         self.memory = nn.GRUCell(hidden, hidden)
-        self.head = nn.Linear(hidden, 5)
+        self.head = nn.Linear(hidden, outputs)
+        self.outputs = outputs
         nn.init.orthogonal_(self.head.weight, 0.01)
         nn.init.zeros_(self.head.bias)
         self.hidden = hidden
@@ -32,18 +33,19 @@ class RecurrentActor(nn.Module):
         if memory is None:
             memory = torch.zeros_like(encoded)
         memory = self.memory(encoded, memory.reshape(-1, self.hidden))
-        return self.head(memory).reshape(*shape, 5), memory.reshape(*shape, self.hidden)
+        return self.head(memory).reshape(*shape, self.outputs), memory.reshape(*shape, self.hidden)
 
 
 class MAPPO(nn.Module):
-    def __init__(self, obs_dim=28, state_dim=36, hidden=128, recurrent=False):
+    def __init__(self, obs_dim=28, state_dim=36, hidden=128, recurrent=False, adaptive=False):
         super().__init__()
-        self.actor = RecurrentActor(obs_dim, hidden) if recurrent else mlp(obs_dim, 5, hidden)
+        self.action_dim = 10 if adaptive else 5
+        self.actor = RecurrentActor(obs_dim, hidden, self.action_dim) if recurrent else mlp(obs_dim, self.action_dim, hidden)
         self.critic = mlp(state_dim, 1, hidden)
         self.register_buffer("value_mean", torch.tensor(0.0))
         self.register_buffer("value_std", torch.tensor(1.0))
         self.register_buffer("value_updates", torch.tensor(0))
-        self.spec = dict(obs_dim=obs_dim, state_dim=state_dim, hidden=hidden, recurrent=recurrent)
+        self.spec = dict(obs_dim=obs_dim, state_dim=state_dim, hidden=hidden, recurrent=recurrent, adaptive=adaptive)
         self._memory = None
 
     def reset_memory(self):
@@ -80,10 +82,14 @@ class MAPPO(nn.Module):
         return (targets - new_mean) / new_std
 
     @torch.no_grad()
-    def moves(self, obs, deterministic=True):
+    def actions(self, obs, deterministic=True):
         obs = torch.as_tensor(obs, dtype=torch.float32)
         dist, self._memory = self.policy(obs, self._memory)
-        return (dist.logits.argmax(dim=-1) if deterministic else dist.sample()).numpy()
+        encoded = (dist.logits.argmax(dim=-1) if deterministic else dist.sample()).numpy()
+        return encoded % 5, encoded // 5
+
+    def moves(self, obs, deterministic=True):
+        return self.actions(obs, deterministic)[0]
 
 
 def gae(rewards, values, next_values, boundaries, terminals=None, gamma=0.99, lam=0.95):
@@ -103,7 +109,11 @@ def load_policy(path):
     # TorchVersion appeared in early locally created pilot metadata.
     with torch.serialization.safe_globals([torch.torch_version.TorchVersion]):
         checkpoint = torch.load(path, map_location="cpu", weights_only=True)
-    model = MAPPO(**checkpoint["model_spec"])
+    if checkpoint["model_spec"].get("separated"):
+        from .sequential import ModularMAPPO
+        model = ModularMAPPO(**checkpoint["model_spec"])
+    else:
+        model = MAPPO(**checkpoint["model_spec"])
     # Early pilot checkpoints predate value normalization; their raw values use mean=0/std=1.
     state = checkpoint["model"]
     for key in ("value_mean", "value_std", "value_updates"):

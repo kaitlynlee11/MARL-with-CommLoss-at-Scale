@@ -1,5 +1,11 @@
 # Three-agent MAPPO navigation results
 
+The current spaced-landmark baselines across 15 independent training seeds are
+tracked separately in [the measured multi-seed report](navigation-baseline-15-seeds-results.md).
+It uses fresh seed-42 reruns and seeds 43-56, and marks partial results until all
+45 policy trainings and evaluations finish. These use a different layout
+distribution from the historical unconstrained experiment below.
+
 This is the earlier **unconstrained-landmark, single-policy ablation** experiment.
 The spaced-landmark rerun trains separate policies for each schedule. The training
 commands below explicitly use `--min-landmark-distance 0` to reproduce this older

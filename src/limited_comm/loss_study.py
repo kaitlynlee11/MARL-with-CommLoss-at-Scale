@@ -24,8 +24,9 @@ def main():
     baseline = json.loads((args.source / "summary.json").read_text(encoding="utf-8"))
     old_rows = [json.loads(line) for line in
                 (args.source / "episodes.jsonl").read_text(encoding="utf-8").splitlines()]
-    if baseline["loss"] != 0 or baseline["min_landmark_distance"] != 0.4:
-        parser.error("source must be the loss-free, 0.4-spaced baseline study")
+    if (baseline["loss"] != 0 or baseline["min_landmark_distance"] != 0.4
+            or baseline.get("min_agent_distance") != 0.4):
+        parser.error("source must be loss-free with both landmark and agent-start radial spacing 0.4; retrain legacy unrestricted-start baselines")
     args.output.mkdir(parents=True, exist_ok=False)
     torch.set_num_threads(1)
     summaries, provenance, paired, records, models = {}, {}, {}, [], {}
@@ -34,6 +35,7 @@ def main():
             path = args.source / label / "best.pt"
             model, checkpoint = load_policy(path)
             config = checkpoint["config"]
+            assert config.get("min_agent_distance") == .4
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             assert digest == baseline["selections"][label]["sha256"]
             assert config["min_landmark_distance"] == 0.4 and config["radius"] == 0.6
@@ -47,7 +49,7 @@ def main():
             rows = []
             for i, (seed, original) in enumerate(sorted(originals.items())):
                 row = {"condition": label, **evaluate_episode(
-                    model, seed, schedule, 5, args.loss, 100, 0.6, min_landmark_distance=0.4, min_agent_distance=baseline.get("min_agent_distance",0.0))}
+                    model, seed, schedule, 5, args.loss, 100, 0.6, min_landmark_distance=0.4, min_agent_distance=.4)}
                 assert row["actual_min_separation"] == original["actual_min_separation"]
                 assert row["attempted_links"] == original["attempted_links"]
                 if schedule == "none":
@@ -67,7 +69,7 @@ def main():
                 "success_change_pp": 100 * (summaries[label]["success_rate"] - baseline["conditions"][label]["success_rate"])}
             print(label, json.dumps(summaries[label]), flush=True)
     result = {"source": str(args.source.resolve()), "loss": args.loss,
-              "min_landmark_distance": 0.4, "min_agent_distance": baseline.get("min_agent_distance",0.0), "radius": 0.6, "horizon": 100,
+              "min_landmark_distance": 0.4, "min_agent_distance": .4, "radius": 0.6, "horizon": 100,
               "episodes_per_condition": baseline["episodes_per_condition"],
               "test_seed_start": baseline["test_seed_start"],
               "scope": "frozen loss-free-trained policies; no retraining or checkpoint selection",
@@ -82,7 +84,7 @@ def main():
     if affected:
         seeds["loss-affected.html"] = min(affected)
     for filename, seed in seeds.items():
-        replay = collect_replay(3, args.loss, 100, 5, seed, models=models, min_landmark_distance=0.4, min_agent_distance=baseline.get("min_agent_distance",0.0))
+        replay = collect_replay(3, args.loss, 100, 5, seed, models=models, min_landmark_distance=0.4, min_agent_distance=.4)
         for run in replay["runs"]:
             row = next(r for r in records if r["seed"] == seed and r["schedule"] == run["schedule"])
             final = run["frames"][-1]

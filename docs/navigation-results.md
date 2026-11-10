@@ -2,8 +2,10 @@
 
 The current spaced-landmark baselines across 15 independent training seeds are
 tracked separately in [the measured multi-seed report](navigation-baseline-15-seeds-results.md).
-It uses fresh seed-42 reruns and seeds 43-56, and marks partial results until all
-45 policy trainings and evaluations finish. These use a different layout
+It retrains every seed 42-56 with both agent-start and landmark radial separation
+at least 0.4, and marks partial results until all 45 policy trainings and
+evaluations finish. Earlier unrestricted-agent-start multi-seed runs are excluded.
+These use a different layout
 distribution from the historical unconstrained experiment below.
 
 This is the earlier **unconstrained-landmark, single-policy ablation** experiment.

@@ -1,11 +1,18 @@
 # Spaced-landmark MAPPO baselines
 
-The 15-training-seed extension (fresh seed-42 reruns plus seeds 43-56) is
+The corrected 15-training-seed study (all seeds 42-56 retrained from scratch) is
 tracked in [the measured multi-seed report](navigation-baseline-15-seeds-results.md).
 That report updates as runs finish and explicitly marks incomplete results.
-Every included seed must have verified checkpoints and episode-level evaluations;
-the historical rounded values below are excluded from the new aggregate.
-The earlier provisional report that retained rounded seed-42 values is superseded.
+Both agent starting centers and landmark centers must be at least 0.4 units
+apart in pairwise radial distance, throughout training resets, curriculum resets,
+validation and evaluation. Every included seed must have verified checkpoints and
+episode-level evaluations. The earlier unrestricted-agent-start runs are
+superseded and excluded from this corrected aggregate.
+
+## Historical results with unrestricted agent starts
+
+The table below predates the 0.4-unit agent-start criterion. It is retained only
+as historical context; it is not the result of the corrected training study.
 
 The same frozen checkpoints were subsequently tested with 25% packet loss per
 directed link. See [packet-loss results](spaced-navigation-loss25-results.md)

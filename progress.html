@@ -15,7 +15,7 @@
 <section class="cards" id="summaries" aria-label="Communication schedule summaries"></section>
 <div class="section-head"><div><h2>Run progress</h2><div class="tiny" style="margin-top:3px">Click a run for training details and evaluation results.</div></div><div class="controls"><select id="filter" aria-label="Filter runs"><option value="all">All seeds</option><option value="active">Active seeds</option><option value="complete">Seeds with results</option><option value="queued">Queued seeds</option><option value="attention">Need attention</option></select><a href="/report" target="_blank" rel="noopener" style="font-size:12px">Results report ↗</a></div></div>
 <div class="grid-wrap"><div class="grid-head"><div>Seed</div><div class="schedule-name" style="--schedule:var(--blue)"><i class="swatch"></i>Full communication</div><div class="schedule-name" style="--schedule:var(--none)"><i class="swatch"></i>No communication</div><div class="schedule-name" style="--schedule:var(--fixed)"><i class="swatch"></i>Every 5 steps</div></div><div id="runs"><div class="empty">Loading live progress…</div></div></div>
-<footer><span id="episodes">Evaluation: 200 held-out episodes per policy · 9,000 total</span><span>Seed 42 is a fresh rerun. Historical rounded scores are excluded.</span></footer>
+<footer><span id="episodes">Evaluation: 200 held-out episodes per policy · 9,000 total</span><span>All 45 policies retrain from scratch. Agent starts and landmarks are at least 0.4 units apart.</span></footer>
 <footer><span>Training percentage tracks world steps; verification also requires evaluation and artifact checks.</span><button class="refresh" id="refresh">Refresh now ↻</button></footer>
 </main>
 <dialog id="detail"><div class="dialog-head"><div><div class="eyebrow" id="detail-seed"></div><h2 id="detail-title" style="margin-top:4px"></h2></div><button class="close" id="close-detail" aria-label="Close run details">×</button></div><div class="dialog-body" id="detail-body"></div></dialog>
@@ -37,7 +37,7 @@ function summaryCards(){
 function showRows(){
  const mode=$('filter').value;let html='';
  for(let seed=42;seed<=56;seed++){const runs=data.runs.filter(r=>r.seed===seed);const match=mode==='all'||runs.some(r=>mode==='active'?activeStates.includes(r.state):mode==='complete'?r.state==='complete':mode==='queued'?r.state==='queued':r.stale||r.state==='failed');if(!match)continue;
- html+=`<div class="seed-row"><div class="seed-id">${seed}${seed===42?'<span>rerun</span>':''}</div>`;
+ html+=`<div class="seed-row"><div class="seed-id">${seed}</div>`;
  for(const r of runs){const evaluation=['evaluating','verifying'].includes(r.state);let note=r.state==='queued'?'Waiting for a worker':evaluation?`${r.episodes}/200 episodes`:r.state==='complete'?`${r.episodes} episodes verified`:`${compact(r.steps)} / 8.96M steps`;const end=r.result?`<span class="result">${pct(r.result.success_rate)} success</span>`:`<span class="${r.stale?'warning':''}">${r.stale?'No recent log · ':''}${r.state==='queued'?'':ago(r.seconds_since_update)}</span>`;
  html+=`<button class="run ${r.state}" style="--schedule:${colors[r.condition]}" data-seed="${seed}" data-label="${r.condition}" aria-label="Seed ${seed}, ${labels[r.condition]}, ${states[r.state]}, ${pct(r.fraction)} trained"><div class="run-top"><span class="status ${r.state}">${states[r.state]}</span><span class="percent">${pct(r.fraction,0)}</span></div><div class="track"><span style="width:${r.fraction*100}%"></span></div><div class="run-bottom"><span>${note}</span>${end}</div></button>`;
  }html+='</div>';

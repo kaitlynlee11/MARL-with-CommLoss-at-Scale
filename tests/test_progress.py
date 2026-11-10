@@ -50,7 +50,7 @@ def test_evaluation_is_separate_from_verified_completion(tmp_path):
 
 def test_collector_uses_fresh_seed42_and_excludes_historical_aggregate(tmp_path):
     original = tmp_path / "results/baseline-15-seeds-20261109"
-    measured = tmp_path / "results/navigation-baseline-15-seeds-20261109"
+    measured = tmp_path / "results/baseline-agent-spacing04-15-seeds-20261109"
     save(original / "seed-42/full/initial/learning.jsonl", {"steps": 999999})
     save(measured / "seed-42/full/initial/learning.jsonl", {"steps": 6400})
     save(original / "summary.json", {"per_seed": [{"training_seed": 42, "condition": "full"}]})

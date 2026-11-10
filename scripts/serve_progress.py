@@ -98,8 +98,8 @@ def condition_progress(directory, seed, label, verified=False, error=None, now=N
 
 def collect_progress(repo=REPO):
     now = time.time()
-    original_root = repo / "results/baseline-15-seeds-20261109"
-    measured_root = repo / "results/navigation-baseline-15-seeds-20261109"
+    original_root = repo / "results/baseline-agent-spacing04-15-seeds-20261109"
+    measured_root = original_root
     original = read_json(original_root / "status.json", {})
     measured = read_json(measured_root / "status.json", {})
     summary = read_json(measured_root / "summary.json", {})
@@ -108,7 +108,7 @@ def collect_progress(repo=REPO):
     for seed in range(42, 57):
         root = measured_root if seed == 42 else original_root
         for label in LABELS:
-            error = measured.get("failures", {}).get(label if seed == 42 else f"{seed}/{label}")
+            error = measured.get("failures", {}).get(f"{seed}/{label}")
             old_state = original.get("jobs", {}).get(f"{seed}/{label}", "")
             if old_state.startswith("failed"):
                 error = old_state

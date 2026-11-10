@@ -74,6 +74,9 @@ def finalize(root, args, selections, seconds):
         rows = [json.loads(line) for line in (directory / "evaluation/episodes.jsonl").read_text(encoding="utf-8").splitlines()]
         assert len(rows) == args.episodes
         assert all(r["actual_min_separation"] >= args.min_landmark_distance for r in rows)
+        assert all(r["actual_initial_agent_separation"] >= args.min_agent_distance for r in rows)
+        if args.min_agent_distance >= .4:
+            assert not any(r["initial_collision"] for r in rows)
         assert all(r["loss"] == 0 and r["attempted_links"] == r["delivered_links"] for r in rows)
         records.extend(rows)
         models[schedule] = load_policy(directory / "best.pt")[0]

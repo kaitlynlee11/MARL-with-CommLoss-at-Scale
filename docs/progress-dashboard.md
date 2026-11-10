@@ -16,7 +16,12 @@ The server listens only on this computer's loopback address. Leave it running
 while viewing progress; Ctrl+C stops a foreground server.
 
 The grid covers training seeds 42-56 and all three communication schedules.
-Seed 42 comes from the fresh rerun. Each policy has an initial budget of
+All 45 policies are retrained from scratch with minimum pairwise radial center
+separation of 0.4 units for both agent starts and landmarks. This applies to
+training, curriculum, validation and evaluation resets. Agents may approach each
+other after reset. Earlier unrestricted-agent-start runs are excluded.
+Artifacts are under `results/baseline-agent-spacing04-15-seeds-20261109/`.
+Each policy has an initial budget of
 8,320,000 world steps, followed by 640,000 refinement steps and 200 held-out
 evaluation episodes. Training progress totals 403,200,000 world steps; evaluation
 totals 9,000 episodes. A run becomes complete only when the measured-study

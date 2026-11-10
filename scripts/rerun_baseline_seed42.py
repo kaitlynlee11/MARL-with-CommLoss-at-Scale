@@ -20,13 +20,15 @@ from run_baseline_seeds import LABELS, REPO, report, verify_condition, write_jso
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-study", type=Path, default=REPO / "results/baseline-15-seeds-20261109")
+    parser.add_argument("--source-study", type=Path, default=REPO / "results/baseline-agent-spacing04-15-seeds-20261109")
     parser.add_argument("--output", type=Path, default=REPO / "results/navigation-baseline-15-seeds-20261109")
     parser.add_argument("--smoke", action="store_true")
     cli = parser.parse_args()
     source = cli.source_study.resolve()
     root = cli.output.resolve()
     original = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
+    if original.get("min_agent_distance") != .4:
+        parser.error("source study must use 0.4-unit agent-start spacing; run run_baseline_seeds.py for the corrected complete study")
     if original["smoke_only"] != cli.smoke:
         parser.error("Smoke and production source studies cannot be mixed")
     root.mkdir(parents=True, exist_ok=False)
@@ -37,7 +39,7 @@ def main():
             raise ValueError(f"Source snapshot hash mismatch: {name}")
     shutil.copyfile(Path(__file__), root / "runner.py")
     shutil.copyfile(REPO / "scripts/run_baseline_seeds.py", root / "analysis.py")
-    seeds = [42, *original["new_training_seeds"]]
+    seeds = sorted({42, *original["new_training_seeds"]})
     write_json(root / "manifest.json", {
         "training_seeds": seeds, "rerun_training_seed": 42,
         "other_seeds_source_study": str(source), "smoke_only": cli.smoke,
@@ -45,7 +47,8 @@ def main():
         "initial_steps": 6400 if cli.smoke else 8320000,
         "refine_steps": 6400 if cli.smoke else 640000,
         "evaluation_episodes_per_policy": 2 if cli.smoke else 200,
-        "protocol": "Exactly the source snapshot and settings used for the other 14 seeds; legacy distance reward, agent spacing 0, landmark spacing 0.4, loss 0, 100-step horizon."})
+        "min_agent_distance": .4, "min_landmark_distance": .4,
+        "protocol": "Exactly the source snapshot and settings used for the other 14 seeds; legacy distance reward, agent spacing 0.4, landmark spacing 0.4, loss 0, 100-step horizon."})
     sys.path.insert(0, str(snapshot))
     os.environ["PYTHONPATH"] = str(snapshot)
     os.environ["OMP_NUM_THREADS"] = "1"
@@ -55,7 +58,7 @@ def main():
     args = SimpleNamespace(root=root, initial_steps=6400 if cli.smoke else 8320000,
                            refine_steps=6400 if cli.smoke else 640000,
                            episodes=2 if cli.smoke else 200, curriculum_steps=1000000,
-                           min_landmark_distance=.4, min_agent_distance=0., test_seed=400000,
+                           min_landmark_distance=.4, min_agent_distance=.4, test_seed=400000,
                            training_seed=42)
     (root / "seed-42").mkdir()
     document = REPO / "docs/navigation-baseline-15-seeds-results.md"

@@ -1,5 +1,11 @@
 # Adaptive communication scheduler training
 
+The current 15-seed, zero-loss study uses the corrected 0.4-unit agent and
+landmark spacing. See [its protocol](adaptive-15-seeds-protocol.md),
+[live tracker](http://127.0.0.1:8765/adaptive/) and
+[results](adaptive-15-seeds-results.md). The single-seed 25%-loss study below
+is retained as historical context.
+
 November 5 reward update: [distance penalties now stop while full coverage is maintained](task-return.md), in both the base task reward and adaptive training shaping. The formulas and completed November 4 experiments below describe the earlier reward; those checkpoints and historical measurements have not been retrained or overwritten.
 
 Started November 4, 2026. This extends recurrent MAPPO to learn movement and transmission jointly. Each decentralized actor receives only the original 28 local observation values and recurrent memory. Its ten categorical actions encode `movement + 5 * transmit`, covering five movements and two gate choices. The centralized critic alone receives privileged world state and pooled inboxes.

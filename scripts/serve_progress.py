@@ -133,6 +133,18 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/progress":
             data = json.dumps(collect_progress(), allow_nan=False).encode("utf-8")
             content_type = "application/json; charset=utf-8"
+        elif route in ("/adaptive", "/adaptive/", "/adaptive/progress.html",
+                       "/adaptive/report.md", "/adaptive/per-seed.csv", "/adaptive/progress.json"):
+            filename = route.rsplit("/", 1)[-1]
+            if filename not in ("report.md", "per-seed.csv", "progress.json"):
+                filename = "progress.html"
+            path = REPO / "results/adaptive-zero-loss-15-seeds-20261110" / filename
+            if not path.exists():
+                self.send_error(404, "Adaptive study has not generated this artifact yet")
+                return
+            data = path.read_bytes()
+            content_type = {"progress.html": "text/html; charset=utf-8", "report.md": "text/plain; charset=utf-8",
+                            "per-seed.csv": "text/csv; charset=utf-8", "progress.json": "application/json; charset=utf-8"}[filename]
         elif route in ("/", "/progress.html"):
             data = (REPO / "progress.html").read_bytes()
             content_type = "text/html; charset=utf-8"

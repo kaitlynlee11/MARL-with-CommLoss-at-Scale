@@ -145,6 +145,19 @@ class Handler(BaseHTTPRequestHandler):
             data = path.read_bytes()
             content_type = {"progress.html": "text/html; charset=utf-8", "report.md": "text/plain; charset=utf-8",
                             "per-seed.csv": "text/csv; charset=utf-8", "progress.json": "application/json; charset=utf-8"}[filename]
+        elif route in ("/loss", "/loss/", "/loss/progress.html", "/loss/comparison.html", "/loss/report.md",
+                       "/loss/per-seed.csv", "/loss/summary.json", "/loss/status.json"):
+            filename = route.rsplit("/", 1)[-1]
+            if filename not in ("comparison.html", "report.md", "per-seed.csv", "summary.json", "status.json"):
+                filename = "progress.html"
+            path = REPO / "results/scheduler-loss-comparison-20261110" / filename
+            if not path.exists():
+                self.send_error(404)
+                return
+            data = path.read_bytes()
+            content_type = ("text/html; charset=utf-8" if filename.endswith(".html") else
+                            "application/json; charset=utf-8" if filename.endswith(".json") else
+                            "text/csv; charset=utf-8" if filename.endswith(".csv") else "text/plain; charset=utf-8")
         elif route in ("/", "/progress.html"):
             data = (REPO / "progress.html").read_bytes()
             content_type = "text/html; charset=utf-8"

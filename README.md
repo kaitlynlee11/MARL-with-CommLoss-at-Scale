@@ -4,6 +4,26 @@ Starter project for Kaitlyn Lee's EN.665.645 research proposal. The goal is to t
 whether learned communication timing improves the tradeoff between coordination
 and communication cost as teams grow and messages are lost.
 
+## Exploratory landmark-sharing communication
+
+**Status: exploratory.** Landmark-location sharing, coverage reports, the 1.0-unit
+communication radius and the expanded observations are experimental changes.
+Tests and short smoke runs establish implementation correctness, not navigation
+performance or an advantage over the existing baselines. This mode is separate
+from the completed baseline, scheduler-loss and larger-team studies.
+
+Fresh `marl-train` runs now default to the [landmark communication protocol](docs/landmark-communication.md):
+packets share directly discovered landmark locations and timestamped sender
+coverage status with recipients within **1.0 unit radially** at send time.
+Discovery uses the existing 0.6-unit local sensing and nearest-three landmark
+slots; observed locations are remembered for the episode. Adaptive/full/fixed/none
+transmit decisions remain in control. Packet loss and five-step cache expiration
+still apply. New actors use 44 observation values and need new training.
+
+Historical scripts explicitly use `--communication-mode legacy` to preserve the
+old 28-input, position/velocity-only, unlimited-range protocol. Saved checkpoints
+and all existing experiment reports retain their original communication rules.
+
 **Current milestone:** environment, channel, smoke runs, MAPPO navigation training,
 checkpoint evaluation and replay. Fixed-schedule baselines are retained. A warm-start recurrent MAPPO adaptive
 scheduler now learns movement and transmission jointly under 25% packet loss;
@@ -216,20 +236,24 @@ so this adapter explicitly adds a communication channel. The MPE environments
 the adapter retains the PettingZoo Parallel API.
 
 Each actor sees its own position/velocity, up to three nearby agents and landmarks
-within radius 0.6, validity masks, and a pooled inbox. Observation length stays 28
-across team sizes. The adapter deliberately rebuilds actor observations from the
+within radius 0.6, validity masks, and a pooled inbox. Legacy observation length
+is 28; landmark mode adds reported-landmark and own-coverage features for 44.
+Both stay fixed across team sizes. The adapter deliberately rebuilds actor observations from the
 world instead of returning the base environment's global observations.
 
 Actions are `[movement, transmit]`: five movement choices and a binary gate.
-Messages contain four float32 values: sender position and velocity. Messages sent
+Legacy messages contain four float32 values: sender position and velocity.
+Landmark mode adds discovered landmark records and coverage reports as described
+above. Messages sent
 from state t arrive in observations at t+1. Delivered messages remain cached for
 five steps; their age and availability are observed. Initial inboxes are empty.
 Loss is independent for each directed sender/receiver link; no acknowledgments,
 congestion, bandwidth cap, or variable latency are modeled.
 
-Each sending agent sends one packet to every other agent (all-to-all **unicast**).
-Full communication therefore attempts N(N-1) packets per step, with 16 payload
-bytes each. Failed packets still incur cost. These are simulated payload bytes,
+In legacy mode each sending agent sends one packet to every other agent (all-to-all **unicast**).
+Legacy full communication therefore attempts N(N-1) packets per step, with 16 payload
+bytes each. Landmark mode limits recipients to radius 1.0 and counts 28 header
+bytes plus 16 per discovered landmark per attempted directed packet. Failed packets still incur cost. These are simulated payload bytes,
 excluding headers, and bytes per simulator step rather than physical bits/second.
 Inbox pooling bounds policy input size; it does not reduce network fanout or
 simulation complexity.

@@ -76,7 +76,7 @@ def main():
             subprocess.run(cmd,cwd=repo,stdout=log,stderr=subprocess.STDOUT,check=True)
     try:
         run('training','limited_comm.train','--output',root/'training','--schedule','adaptive',
-            '--loss','.25','--recurrent','--hidden','64','--initialize-actor',initializer,
+            '--communication-mode','legacy','--loss','.25','--recurrent','--hidden','64','--initialize-actor',initializer,
             '--steps',args.steps,'--threads','2','--lr','.0001','--epochs','3','--entropy','.002',
             '--sequence-length','25','--minibatch','2048','--eval-every','25',
             '--validation-episodes','200','--confirmation-episodes','200','--target-success','.9',

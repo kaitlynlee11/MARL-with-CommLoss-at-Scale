@@ -53,7 +53,7 @@ def historical_rows():
     return rows
 
 
-def report(root, rows, expected, smoke=False, measured_only=False, document_path=None, min_agent_distance=.4):
+def report(root, rows, expected, smoke=False, measured_only=False, document_path=None, min_agent_distance=.4, evaluation_episodes=200):
     keys = [(r["training_seed"], r["condition"]) for r in rows]
     if len(keys) != len(set(keys)):
         raise ValueError("Duplicate training seed/condition; cannot count it as another replicate")
@@ -92,21 +92,22 @@ def report(root, rows, expected, smoke=False, measured_only=False, document_path
     write_json(root / "summary.json", result)
     lines = ["# Baselines across training seeds" + (" (SMOKE ONLY)" if smoke else ""), "",
              f"Status: {'complete' if complete else 'in progress'}; {len(rows)}/{expected * 3} condition runs available.", "",
-             f"Reward: -0.5 * sum(landmark nearest-agent distances) - overlapping pairs / 3; minimum pairwise radial landmark center distance 0.4, minimum pairwise radial agent starting center distance {min_agent_distance:g}, loss 0, horizon 100. Spacing applies to training, curriculum, validation, evaluation and replays. Agents may move closer after reset. Each policy is trained from scratch under its own communication schedule. Validation alone selects checkpoints. Held-out scenarios are paired across all policies (400000-400199).", "",
+             f"Reward: -0.5 * sum(landmark nearest-agent distances) - overlapping pairs / 3; minimum pairwise radial landmark center distance 0.4, minimum pairwise radial agent starting center distance {min_agent_distance:g}, loss 0, horizon 100. Spacing applies to training, curriculum, validation, evaluation and replays. Agents may move closer after reset. Each policy is trained from scratch under its own communication schedule. Validation alone selects checkpoints. Held-out scenarios are paired across all policies (400000-{400000 + evaluation_episodes - 1}); {evaluation_episodes} evaluation episodes per trained policy.", "",
              provenance_note, "",
              "Means give each training seed equal weight. SD and 95% percentile bootstrap intervals (20,000 resamples, fixed analysis RNG seed) describe variation across training seeds. Partial results are provisional; no significance claims are made.", "",
-             "| Condition | Seeds | Success mean | Seed SD | 95% seed bootstrap interval | Coverage mean | Task return mean | Packets/episode | Collision step rate |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+             "| Condition | Seeds | Success mean | Seed SD | 95% seed bootstrap interval | Coverage mean | Task return mean | Task return SD | Packets/episode | Collision step rate |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for label, summary in summaries.items():
         m = summary["metrics"]
         s = m["success_rate"]
         ci = s.get("seed_bootstrap_95pct")
         interval = f"{ci[0]:.2%} to {ci[1]:.2%}" if ci else "pending"
         sd = f"{s['sample_sd']:.2%}" if s['sample_sd'] is not None else "pending"
+        return_sd = f"{m['task_return']['sample_sd']:.3f}" if m['task_return']['sample_sd'] is not None else "pending"
         if summary['training_seeds']:
-            lines.append(f"| {label} | {summary['training_seeds']} | {s['mean']:.2%} | {sd} | {interval} | {m['final_coverage']['mean']:.2%} | {m['task_return']['mean']:.3f} | {m['attempted_links']['mean']:.1f} | {m['collision_step_rate']['mean']:.2%} |")
+            lines.append(f"| {label} | {summary['training_seeds']} | {s['mean']:.2%} | {sd} | {interval} | {m['final_coverage']['mean']:.2%} | {m['task_return']['mean']:.3f} | {return_sd} | {m['attempted_links']['mean']:.1f} | {m['collision_step_rate']['mean']:.2%} |")
         else:
-            lines.append(f"| {label} | 0 | pending | pending | pending | pending | pending | pending | pending |")
+            lines.append(f"| {label} | 0 | pending | pending | pending | pending | pending | pending | pending | pending |")
     lines += ["", "## Individual training seeds", "", "| Seed | Condition | Success | Coverage | Task return | Packets/episode | Collision step rate |", "| --- | --- | --- | --- | --- | --- | --- |"]
     for r in rows:
         lines.append(f"| {r['training_seed']} | {r['condition']} | {r['success_rate']:.1%} | {r['final_coverage']:.2%} | {r['task_return']:.3f} | {r['attempted_links']:.0f} | {r['collision_step_rate']:.2%} |")

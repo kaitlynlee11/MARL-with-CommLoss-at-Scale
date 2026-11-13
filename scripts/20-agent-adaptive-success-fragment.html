@@ -1,0 +1,102 @@
+<div id="adaptive-twenty-success">
+  <style>
+    #adaptive-twenty-success {display:grid;gap:calc(var(--font-size-base)*.75);color:var(--foreground)}
+    #adaptive-twenty-success .replay-meta {color:var(--muted-foreground)}
+    #adaptive-twenty-success .replay-readout {display:flex;flex-wrap:wrap;gap:calc(var(--font-size-base)*1.25)}
+    #adaptive-twenty-success .replay-plot {width:100%;height:auto;display:block;overflow:visible}
+    #adaptive-twenty-success .replay-legend {display:flex;flex-wrap:wrap;align-items:center;gap:calc(var(--font-size-base)*1.25)}
+    #adaptive-twenty-success .replay-legend span {display:inline-flex;gap:calc(var(--font-size-base)*.4);align-items:center}
+    #adaptive-twenty-success .agent-swatch {width:12px;height:12px;border-radius:50%;background:var(--viz-series-1)}
+    #adaptive-twenty-success .landmark-swatch {width:10px;height:10px;transform:rotate(45deg);background:var(--viz-series-2)}
+    #adaptive-twenty-success .collision-swatch {width:12px;height:12px;border-radius:50%;border:2px solid var(--viz-series-3)}
+    #adaptive-twenty-success .timeline {display:grid;gap:calc(var(--font-size-base)*.25)}
+    #adaptive-twenty-success .timeline-label {display:flex;justify-content:space-between;gap:calc(var(--font-size-base)*.5)}
+    #adaptive-twenty-success .replay-plot .grid {stroke:var(--border);stroke-width:1}
+    #adaptive-twenty-success .replay-plot .axis-label {fill:var(--muted-foreground)}
+    #adaptive-twenty-success .replay-plot .coverage-ring {fill:none;stroke:var(--muted-foreground);stroke-opacity:.4;stroke-width:1}
+    #adaptive-twenty-success .replay-plot .coverage-ring.covered {stroke:var(--viz-series-2);stroke-opacity:.7}
+    #adaptive-twenty-success .replay-plot .landmark {fill:var(--background);stroke:var(--muted-foreground);stroke-width:1.5}
+    #adaptive-twenty-success .replay-plot .landmark.covered {fill:var(--viz-series-2);stroke:var(--viz-series-2)}
+    #adaptive-twenty-success .replay-plot .agent {fill:var(--viz-series-1);fill-opacity:.18;stroke:var(--viz-series-1);stroke-width:1.5}
+    #adaptive-twenty-success .replay-plot .agent.colliding {stroke:var(--viz-series-3);stroke-width:2.5}
+    #adaptive-twenty-success .replay-plot .agent-label {fill:var(--foreground);text-anchor:middle;dominant-baseline:central;pointer-events:none}
+  </style>
+  <div>
+    <h3>Successful 20-agent adaptive episode</h3>
+    <div class="text-small replay-meta">Policy seed 42 · scenario 400069 · zero packet loss</div>
+  </div>
+  <div class="replay-readout tabular-nums">
+    <span data-stat="coverage"></span>
+    <span data-stat="packets"></span>
+    <span data-stat="collisions"></span>
+  </div>
+  <svg class="replay-plot" role="img" aria-label="Recorded movements of 20 agents and 20 static landmarks. Numbered circles are agents. Filled diamonds are covered landmarks. All 20 landmarks are covered at the final step."></svg>
+  <div class="replay-legend text-small">
+    <span><i class="agent-swatch" aria-hidden="true"></i>Numbered agents</span>
+    <span><i class="landmark-swatch" aria-hidden="true"></i>Covered landmarks</span>
+    <span><i class="collision-swatch" aria-hidden="true"></i>Overlapping agents</span>
+  </div>
+  <div class="timeline">
+    <div class="timeline-label"><label class="form-label" for="adaptive-twenty-frame">Recorded step <output class="tabular-nums" data-step>100 / 100</output></label><span class="text-small replay-meta">First full coverage: step 24</span></div>
+    <input class="form-range" id="adaptive-twenty-frame" type="range" min="0" max="100" step="1" value="100" aria-label="Recorded simulation step">
+  </div>
+  <div class="viz-controls"><button type="button" class="btn btn-primary" data-play>Replay</button><span class="text-small replay-meta" data-state>Final state · 20/20 covered</span></div>
+  <span class="sr-only" aria-live="polite" data-announcement></span>
+  <script type="application/json" id="adaptive-twenty-data">__REPLAY_DATA__</script>
+  <script>
+  (()=>{
+    const root=document.getElementById('adaptive-twenty-success');
+    const data=JSON.parse(root.querySelector('#adaptive-twenty-data').textContent);
+    const svg=root.querySelector('.replay-plot'),slider=root.querySelector('#adaptive-twenty-frame'),play=root.querySelector('[data-play]');
+    const saved=window.openai?.widgetState?.privateContent;
+    let frame=Number.isInteger(saved?.frame)&&saved.frame>=0&&saved.frame<=100?saved.frame:100,playing=false,lastTime=0,width=600,height=540;
+    function save(){
+      const f=data.frames[frame];
+      window.openai?.setWidgetState?.({modelContent:{trainingSeed:42,scenarioSeed:400069,step:frame,coveredLandmarks:f.covered.filter(Boolean).length,attemptedPackets:f.attempts,collisionPairs:f.collision_pairs},privateContent:{frame}})?.catch(()=>{});
+    }
+    function draw(){
+      const f=data.frames[frame],extent=data.bounds,scale=(Math.min(width,height)-48)/(2*extent),cx=width/2,cy=height/2;
+      const xy=p=>[cx+p[0]*scale,cy-p[1]*scale];
+      svg.setAttribute('viewBox',`0 0 ${width} ${height}`);
+      let html='<desc>Verified recorded episode. Physical agent radius 0.15; landmark coverage radius 0.1. Success requires final coverage; collisions do not terminate the episode.</desc>';
+      for(const value of [-1,0,1]){
+        const a=xy([value,-extent]),b=xy([value,extent]),c=xy([-extent,value]),d=xy([extent,value]);
+        html+=`<line class="grid" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"/><line class="grid" x1="${c[0]}" y1="${c[1]}" x2="${d[0]}" y2="${d[1]}"/>`;
+      }
+      data.landmarks.forEach((p,i)=>{
+        const [x,y]=xy(p),covered=f.covered[i],r=5;
+        html+=`<g data-tooltip="Landmark ${i+1}: ${covered?'covered':'uncovered'}"><circle class="coverage-ring ${covered?'covered':''}" cx="${x}" cy="${y}" r="${.1*scale}"/><path class="landmark ${covered?'covered':''}" d="M ${x} ${y-r} L ${x+r} ${y} L ${x} ${y+r} L ${x-r} ${y} Z"/></g>`;
+      });
+      f.agents.forEach((p,i)=>{
+        const [x,y]=xy(p),collision=f.colliding.includes(i);
+        html+=`<g data-tooltip="Agent ${i+1}${collision?': overlapping another agent':''}"><circle class="agent ${collision?'colliding':''}" cx="${x}" cy="${y}" r="${data.radii[i]*scale}"/><text class="agent-label" x="${x}" y="${y}">${i+1}</text></g>`;
+      });
+      svg.innerHTML=html;
+      root.querySelector('[data-stat="coverage"]').textContent=f.covered.filter(Boolean).length+'/20 landmarks covered';
+      root.querySelector('[data-stat="packets"]').textContent='Packets sent: '+f.attempts;
+      root.querySelector('[data-stat="collisions"]').textContent='Collision pairs now: '+f.collision_pairs;
+      root.querySelector('[data-step]').textContent=frame+' / 100';
+      root.querySelector('[data-state]').textContent=frame===100?'Final state · 20/20 covered':frame===24?'First full coverage':f.covered.every(Boolean)?'All landmarks covered':'Recorded trajectory';
+      slider.value=frame;
+      play.textContent=playing?'Pause':frame===100?'Replay':'Play';
+    }
+    function announce(){root.querySelector('[data-announcement]').textContent='Step '+frame+': '+data.frames[frame].covered.filter(Boolean).length+' of 20 landmarks covered.'}
+    play.addEventListener('click',()=>{
+      if(playing){playing=false;announce();save()}else{if(frame===100)frame=0;playing=true;lastTime=performance.now();save()}
+      draw();
+    });
+    slider.addEventListener('input',()=>{playing=false;frame=Number(slider.value);draw()});
+    slider.addEventListener('change',()=>{announce();save()});
+    window.addEventListener('openai:set_globals',event=>{
+      const next=event.detail?.globals?.widgetState?.privateContent?.frame;
+      if(!playing&&Number.isInteger(next)&&next>=0&&next<=100&&next!==frame){frame=next;draw()}
+    });
+    function tick(time){
+      if(playing&&time-lastTime>=100){lastTime=time;frame=Math.min(100,frame+1);if(frame===100){playing=false;announce();save()}draw()}
+      requestAnimationFrame(tick);
+    }
+    new ResizeObserver(entries=>{width=Math.max(280,entries[0].contentRect.width);height=Math.min(width,540);draw()}).observe(root);
+    draw();requestAnimationFrame(tick);
+  })();
+  </script>
+</div>

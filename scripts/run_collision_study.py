@@ -113,7 +113,7 @@ def main():
     def train(label,schedule):
         directory=root/'training'/label
         directory.mkdir(parents=True)
-        common=['--schedule',schedule,'--period','5','--loss','0','--terminate-on-collision',
+        common=['--communication-mode','legacy','--schedule',schedule,'--period','5','--loss','0','--terminate-on-collision',
                 '--min-agent-distance','.4',
                 '--seed','42','--threads','1','--recurrent','--hidden','64','--eval-every','50',
                 '--validation-episodes','200','--no-early-stop','--coverage-bonus','1','--success-bonus','10',

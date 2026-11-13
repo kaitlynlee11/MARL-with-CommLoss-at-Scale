@@ -19,9 +19,11 @@ from .rewards import TASK_REWARD_VERSION
 
 @torch.no_grad()
 def validate(model, episodes=100, seed=100_000, horizon=100, radius=0.6,
-             schedule="full", period=5, min_landmark_distance=0.4, loss=0.0, terminate_on_collision=False, min_agent_distance=0.4):
+             schedule="full", period=5, min_landmark_distance=0.4, loss=0.0, terminate_on_collision=False, min_agent_distance=0.4,
+             communication_mode="legacy", communication_radius=1.):
     env = VectorSpread(batch=episodes, seed=seed, horizon=horizon, radius=radius,
-                       min_landmark_distance=min_landmark_distance, loss=loss, min_agent_distance=min_agent_distance)
+                       min_landmark_distance=min_landmark_distance, loss=loss, min_agent_distance=min_agent_distance,
+                       communication_mode=communication_mode, communication_radius=communication_radius)
     obs, _ = env.reset()
     model.reset_memory()
     ever = np.zeros(episodes, dtype=bool)
@@ -100,6 +102,9 @@ def main():
     parser.add_argument("--validation-episodes", type=int, default=100)
     parser.add_argument("--target-success", type=float, default=0.8)
     parser.add_argument("--radius", type=float, default=0.6)
+    parser.add_argument("--communication-mode", choices=("legacy", "landmark"), default="landmark",
+                        help="landmark is exploratory; legacy reproduces historical communication")
+    parser.add_argument("--communication-radius", type=float, default=1.)
     parser.add_argument("--schedule", choices=["full", "none", "fixed", "adaptive"], default="full")
     parser.add_argument("--period", type=int, default=5)
     parser.add_argument("--min-landmark-distance", type=float, default=0.4)
@@ -135,6 +140,10 @@ def main():
     parser.add_argument("--reset-optimizer", action="store_true", help="Fresh Adam state for a controlled continuation")
     parser.add_argument("--selection-collision-weight", type=float, default=0., help="Optional success-minus-collision validation selection")
     args = parser.parse_args()
+    if not np.isfinite(args.communication_radius) or args.communication_radius <= 0:
+        parser.error("communication-radius must be finite and positive")
+    obs_dim = 44 if args.communication_mode == "landmark" else 28
+    state_dim = 81 if args.communication_mode == "landmark" else 36
     if not np.isfinite(args.selection_collision_weight) or args.selection_collision_weight < 0:
         parser.error("selection-collision-weight must be finite/nonnegative")
     if not np.isfinite(args.min_agent_distance) or args.min_agent_distance < 0:
@@ -186,6 +195,9 @@ def main():
         if previous["config"]["radius"] != args.radius or previous["config"]["horizon"] != args.horizon:
             parser.error("resume radius/horizon must match the checkpoint")
         parent_config = previous["config"]
+        if (parent_config.get("communication_mode", "legacy") != args.communication_mode
+                or (args.communication_mode == "landmark" and parent_config.get("communication_radius", 1.) != args.communication_radius)):
+            parser.error("resume communication protocol and radius must match checkpoint")
         if parent_config.get("min_agent_distance",0.0) != args.min_agent_distance:
             parser.error("resume agent-start spacing must match checkpoint; use --min-agent-distance 0 for legacy runs")
         if (bool(parent_config.get("terminate_on_collision",False)) != args.terminate_on_collision
@@ -202,15 +214,18 @@ def main():
             parser.error("resume schedule, period and landmark spacing must match the checkpoint")
         start_step = previous["steps"]
     else:
-        model = MAPPO(hidden=args.hidden, recurrent=args.recurrent, adaptive=adaptive)
+        model = MAPPO(obs_dim=obs_dim, state_dim=state_dim, hidden=args.hidden, recurrent=args.recurrent, adaptive=adaptive)
     initializer_hash = None
     if args.initialize_actor:
         parent, source = load_policy(args.initialize_actor)
         if (parent.spec.get("adaptive") or not parent.spec["recurrent"]
                 or parent.spec["hidden"] != args.hidden or source["config"]["radius"] != args.radius
                 or source["config"]["horizon"] != args.horizon
+                or parent.spec["obs_dim"] != obs_dim
+                or source["config"].get("communication_mode", "legacy") != args.communication_mode
+                or (args.communication_mode == "landmark" and source["config"].get("communication_radius", 1.) != args.communication_radius)
                 or source["config"].get("min_landmark_distance", 0) != args.min_landmark_distance):
-            parser.error("initializer must be a compatible fixed-schedule recurrent navigation policy")
+            parser.error("initializer must match the observation size and communication protocol; legacy policies require retraining for landmark messages")
         weights = parent.actor.state_dict()
         # Ten categorical actions: movement + 5 * transmit. Preserve movement marginals,
         # with an initial stochastic transmit probability of 0.1 for every movement.
@@ -236,6 +251,8 @@ def main():
               "confirmation_seed": 500_000, "adaptive_heldout_seed": 400_000,
               "stop_rule": "success > target AND attempted/full < packet target, confirmed in original environment" if adaptive else "baseline validation target",
               "task_reward_version": TASK_REWARD_VERSION,
+              "communication_protocol": "landmark-radius-v1" if args.communication_mode == "landmark" else "position-velocity-all-to-all-v0",
+              "communication_status": "exploratory" if args.communication_mode == "landmark" else "historical",
               "reward_formula": "coverage_bonus*covered_count + success_bonus*success - collision_penalty*pairs - (packet_penalty+packet_multiplier)*attempted_links - time_penalty*(not success) - distance_penalty*distance_sum*(not full_coverage)" if adaptive else "coverage-gated baseline",
               "gamma": 0.99, "gae_lambda": 0.95, "ppo_clip": 0.2,
               "value_normalization": "PopArt EMA 0.01; preserve unnormalized predictions",
@@ -257,10 +274,12 @@ def main():
     else:
         environment_class = VectorSpread
     env = environment_class(batch=args.envs, horizon=args.horizon, seed=args.seed + start_step,
-                       radius=args.radius, min_landmark_distance=args.min_landmark_distance, loss=args.loss, min_agent_distance=args.min_agent_distance)
+                       radius=args.radius, min_landmark_distance=args.min_landmark_distance, loss=args.loss, min_agent_distance=args.min_agent_distance,
+                       communication_mode=args.communication_mode, communication_radius=args.communication_radius)
     validation_args = dict(horizon=args.horizon, radius=args.radius, schedule=args.schedule,
                            period=args.period, min_landmark_distance=args.min_landmark_distance, loss=args.loss,
-                           terminate_on_collision=args.terminate_on_collision, min_agent_distance=args.min_agent_distance)
+                           terminate_on_collision=args.terminate_on_collision, min_agent_distance=args.min_agent_distance,
+                           communication_mode=args.communication_mode, communication_radius=args.communication_radius)
     def reset_training(step, mask=None):
         if args.terminate_on_collision:
             env.reset_indices(np.ones(args.envs,dtype=bool) if mask is None else mask)
@@ -278,6 +297,8 @@ def main():
             else:
                 env.pos[easy] = (goals + env.rng.uniform(-0.25, 0.25, env.pos.shape))[easy]
         env.pos[:] = spaced_agents(env.pos, env.rng, args.min_agent_distance)
+        if env.landmark_channel is not None:
+            env.landmark_channel.reset(mask)
         return env.observe(), env.state()
 
     obs, state = reset_training(start_step)
@@ -450,7 +471,8 @@ def main():
                         rows = [evaluate_episode(model, 500_000 + i, "adaptive", loss=args.loss,
                                                  horizon=args.horizon, radius=args.radius,
                                                  min_landmark_distance=args.min_landmark_distance,
-                                                 terminate_on_collision=args.terminate_on_collision, min_agent_distance=args.min_agent_distance)
+                                                 terminate_on_collision=args.terminate_on_collision, min_agent_distance=args.min_agent_distance,
+                                                 communication_mode=args.communication_mode, communication_radius=args.communication_radius)
                                 for i in range(args.confirmation_episodes)]
                         confirmation = summarize(rows)
                         confirmation["success"] = confirmation["success_rate"]

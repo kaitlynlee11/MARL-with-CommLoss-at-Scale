@@ -7,14 +7,21 @@ import numpy as np
 from itertools import permutations
 from .layout import spaced_landmarks, spaced_agents
 from .rewards import task_reward
+from .landmark_channel import VectorLandmarkChannel
 
 
 class VectorSpread:
     def __init__(self, batch=64, n=3, horizon=100, radius=0.6, neighbors=3,
-                 ttl=5, loss=0.0, comm_cost=0.0, seed=42, min_landmark_distance=0.4, min_agent_distance=0.4):
+                 ttl=5, loss=0.0, comm_cost=0.0, seed=42, min_landmark_distance=0.4, min_agent_distance=0.4,
+                 communication_mode="legacy", communication_radius=1.):
         self.batch, self.n, self.horizon = batch, n, horizon
         self.radius, self.neighbors, self.ttl = radius, neighbors, ttl
         self.loss, self.comm_cost = loss, comm_cost
+        if communication_mode not in ("legacy", "landmark"):
+            raise ValueError("communication_mode must be legacy or landmark")
+        if not np.isfinite(communication_radius) or communication_radius <= 0:
+            raise ValueError("communication_radius must be finite and positive")
+        self.communication_mode, self.communication_radius = communication_mode, communication_radius
         if not np.isfinite(min_agent_distance) or min_agent_distance < 0:
             raise ValueError("min_agent_distance must be finite and nonnegative")
         self.min_agent_distance = min_agent_distance
@@ -27,6 +34,8 @@ class VectorSpread:
         self.cache = np.zeros((batch, n, n, 4), dtype=np.float64)  # receiver, sender
         self.age = np.full((batch, n, n), ttl + 1, dtype=np.int64)
         self.diagonal = np.eye(n, dtype=bool)[None]
+        self.landmark_channel = (VectorLandmarkChannel(batch, n, loss, ttl, self.channel_rng, communication_radius, neighbors)
+                                 if communication_mode == "landmark" else None)
         self.steps = 0
         self.reset()
 
@@ -38,10 +47,14 @@ class VectorSpread:
         self.pos[:] = spaced_agents(self.pos, self.rng, self.min_agent_distance)
         self.cache.fill(0)
         self.age.fill(self.ttl + 1)
+        if self.landmark_channel is not None:
+            self.landmark_channel.reset()
         self.steps = 0
         return self.observe(), self.state()
 
     def inbox(self):
+        if self.landmark_channel is not None:
+            return self.landmark_channel.observe(self.pos)
         valid = self.age <= self.ttl
         count = valid.sum(axis=2)
         denom = np.maximum(count, 1)
@@ -64,10 +77,14 @@ class VectorSpread:
         return slots.reshape(self.batch, self.n, -1)
 
     def observe(self):
+        if self.landmark_channel is not None:
+            self.landmark_channel.refresh_seen(self.pos, self.landmarks, self.radius)
         peers = self.pos[:, None, :, :] - self.pos[:, :, None, :]
         landmarks = self.landmarks[:, None, :, :] - self.pos[:, :, None, :]
-        return np.concatenate([self.pos, self.vel, self._slots(peers, True),
-                               self._slots(landmarks), self.inbox()], axis=-1).astype(np.float32)
+        components = [self.pos, self.vel, self._slots(peers, True), self._slots(landmarks), self.inbox()]
+        if self.landmark_channel is not None:
+            components.append(self.landmark_channel.covering(self.pos).any(axis=-1)[..., None])
+        return np.concatenate(components, axis=-1).astype(np.float32)
 
     def state(self):
         return np.concatenate([np.concatenate([self.pos, self.vel], axis=-1).reshape(self.batch, -1),
@@ -94,12 +111,16 @@ class VectorSpread:
         return distances.min(axis=2) <= self.radius
 
     def step(self, moves, gates):
-        payload = np.concatenate([self.pos, self.vel], axis=-1)
-        self.age = np.minimum(self.age + 1, self.ttl + 1)
-        delivered = ((self.channel_rng.random((self.batch, self.n, self.n)) >= self.loss)
-                     & ~self.diagonal & np.asarray(gates, dtype=bool)[:, None, :])
-        self.cache = np.where(delivered[..., None], payload[:, None, :, :], self.cache)
-        self.age = np.where(delivered, 1, self.age)
+        traffic = None
+        if self.landmark_channel is not None:
+            traffic = self.landmark_channel.advance(gates, self.pos, self.vel, self.landmarks, self.radius)
+        else:
+            payload = np.concatenate([self.pos, self.vel], axis=-1)
+            self.age = np.minimum(self.age + 1, self.ttl + 1)
+            delivered = ((self.channel_rng.random((self.batch, self.n, self.n)) >= self.loss)
+                         & ~self.diagonal & np.asarray(gates, dtype=bool)[:, None, :])
+            self.cache = np.where(delivered[..., None], payload[:, None, :, :], self.cache)
+            self.age = np.where(delivered, 1, self.age)
 
         delta = self.pos[:, :, None, :] - self.pos[:, None, :, :]
         distance = np.linalg.norm(delta, axis=-1)
@@ -112,11 +133,14 @@ class VectorSpread:
         self.vel = self.vel * 0.75 + (5 * movement + force) * 0.1
         self.steps += 1
         diagnostics = self.diagnostics()
-        diagnostics["attempted_links"] = np.asarray(gates).sum(axis=1) * (self.n - 1)
-        diagnostics["delivered_links"] = delivered.sum(axis=(1, 2))
+        if traffic is not None:
+            diagnostics.update(traffic)
+        else:
+            diagnostics["attempted_links"] = np.asarray(gates).sum(axis=1) * (self.n - 1)
+            diagnostics["delivered_links"] = delivered.sum(axis=(1, 2))
         # Distance cost stops at full coverage; collision/communication costs remain.
         reward = task_reward(diagnostics["distance_sum"], diagnostics["collision_pairs"],
                              diagnostics["success"], self.n)
         diagnostics["task_reward"] = reward.copy()
-        reward -= self.comm_cost * np.asarray(gates).sum(axis=1) * (self.n - 1) / self.n
+        reward -= self.comm_cost * diagnostics["attempted_links"] / self.n
         return self.observe(), self.state(), reward.astype(np.float32), self.steps >= self.horizon, diagnostics

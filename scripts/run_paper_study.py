@@ -96,7 +96,7 @@ def main():
         if arm=='proposed':
             command=['limited_comm.paper_train','--source',source,'--output',root/arm,'--steps',args.steps,'--threads','1']
         else:
-            command=['limited_comm.train','--resume',source,'--output',root/arm,'--steps',parent_steps+args.steps,
+            command=['limited_comm.train','--communication-mode','legacy','--resume',source,'--output',root/arm,'--steps',parent_steps+args.steps,
                      '--schedule','adaptive','--loss','0','--terminate-on-collision','--min-agent-distance','.4',
                      '--recurrent','--hidden','64','--seed','42','--threads','1','--no-early-stop',
                      '--lr','.0001','--epochs','2','--sequence-length','25','--minibatch','6400','--entropy','.001',

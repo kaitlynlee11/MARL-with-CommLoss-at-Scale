@@ -10,16 +10,20 @@ from .rewards import TASK_REWARD_VERSION
 
 
 def collect_replay(n, loss, horizon, period, seed, model=None, radius=0.6, min_landmark_distance=0.4,
-                   models=None, schedules=None, terminate_on_collision=False, min_agent_distance=0.4):
+                   models=None, schedules=None, terminate_on_collision=False, min_agent_distance=0.4, layout_sampler="whole",
+                   communication_mode=None, communication_radius=1.):
     runs = []
     if schedules is None:
         schedules = ("adaptive",) if model is not None and model.spec.get("adaptive") else ("none", "full", "fixed")
     for schedule in schedules:
         if models is not None:
             model = models[schedule]
+        mode = communication_mode or ("landmark" if getattr(model, "spec", {}).get("obs_dim") == 44 else "legacy")
+        channel_options = {"communication_mode": mode, "communication_radius": communication_radius} if mode == "landmark" else {}
         env = CommunicationSpread(n=n, loss=loss, horizon=horizon, radius=radius,
                                   min_landmark_distance=min_landmark_distance,
-                                  terminate_on_collision=terminate_on_collision, min_agent_distance=min_agent_distance)
+                                  terminate_on_collision=terminate_on_collision, min_agent_distance=min_agent_distance,
+                                  layout_sampler=layout_sampler, **channel_options)
         rng = np.random.default_rng(seed)
         frames = []
         attempts = delivered = payload_bytes = total_collisions = 0
@@ -78,9 +82,14 @@ def collect_replay(n, loss, horizon, period, seed, model=None, radius=0.6, min_l
     return {"n": n, "loss": loss, "horizon": horizon, "period": period, "seed": seed,
             "bounds": max(1.2, extent + 0.25), "runs": runs, "radius": radius,
             "policy": "random" if model is None else "trained_mappo",
-            "bytes_per_packet": 16, "min_landmark_distance": min_landmark_distance,
+            "bytes_per_packet": 16 if mode == "legacy" else None,
+            "packet_description": ("Each directed packet contains 16 payload bytes, excluding headers." if mode == "legacy" else
+                "Landmark packets contain a 28-byte header and 16 bytes per discovered landmark. Range is checked at send time before movement; cached coverage includes report age."),
+            "communication_mode": mode, "communication_radius": communication_radius if mode == "landmark" else None,
+            "min_landmark_distance": min_landmark_distance,
             "separately_trained": models is not None, "terminate_on_collision": terminate_on_collision,
-            "min_agent_distance": min_agent_distance, "task_reward_version": TASK_REWARD_VERSION}
+            "min_agent_distance": min_agent_distance, "task_reward_version": TASK_REWARD_VERSION,
+            "layout_sampler": layout_sampler}
 
 
 def main():
@@ -94,6 +103,8 @@ def main():
     parser.add_argument("--min-landmark-distance", type=float, default=0.4)
     parser.add_argument("--output", type=Path, default=Path("results/demo.html"))
     parser.add_argument("--min-agent-distance", type=float, default=0.4)
+    parser.add_argument("--layout-sampler", choices=("whole", "sequential"), default="whole")
+    parser.add_argument("--communication-radius", type=float, default=None)
     args = parser.parse_args()
     if args.agents < 2 or not 0 <= args.loss <= 1 or min(args.horizon, args.period) < 1:
         parser.error("require agents >= 2, loss in [0, 1], horizon and period >= 1")
@@ -105,11 +116,14 @@ def main():
         import torch
         torch.set_num_threads(1)
         model, checkpoint = load_policy(args.checkpoint)
-        if args.agents != 3:
-            parser.error("this checkpoint supports the three-agent experiment only")
+        if model.spec["obs_dim"] not in (28, 44):
+            parser.error("checkpoint must support a known local actor observation protocol")
         radius = checkpoint["config"]["radius"]
         spacing = checkpoint["config"].get("min_landmark_distance", 0.0)
-    replay = collect_replay(args.agents, args.loss, args.horizon, args.period, args.seed, model, radius, spacing, min_agent_distance=args.min_agent_distance)
+    replay = collect_replay(args.agents, args.loss, args.horizon, args.period, args.seed, model, radius, spacing,
+                            min_agent_distance=args.min_agent_distance, layout_sampler=args.layout_sampler,
+                            communication_radius=(args.communication_radius if args.communication_radius is not None else
+                                                  checkpoint["config"].get("communication_radius", 1.) if args.checkpoint else 1.))
     # Embedding is safe even if future metadata contains a closing script tag.
     serialized = json.dumps(replay, allow_nan=False).replace("<", "\\u003c")
     html = HTML.replace("__REPLAY_DATA__", serialized)
@@ -173,7 +187,7 @@ document.getElementById('config').textContent=`${data.n} agents · ${Math.round(
 document.getElementById('policy-description').textContent=data.terminate_on_collision?'Collision-terminated evaluation: success requires collision-free survival through step 100 and final full coverage. Each panel freezes at its actual termination.':data.runs[0].schedule==='adaptive'?'Jointly learned navigation and transmission under independent packet loss.':data.separately_trained?'Three separately trained MAPPO policies, each evaluated under its own communication schedule. All panels start from the same world.':data.policy==='trained_mappo'?'One full-communication-trained MAPPO policy, evaluated with three communication schedules. All panels start from the same world.':'All three teams make the same random movements. Change the frame to see how communication traffic differs.';
 document.getElementById('policy-note').textContent=(data.policy==='trained_mappo'?'Actions come from the trained actor using local sensing and received messages. '+(data.separately_trained?'Each panel uses its own checkpoint.':'The same checkpoint is used in all panels.'):'This is a smoke replay, not a learned policy. Navigation ignores messages, so coverage, collisions and task return match across schedules.')+' The viewer shows the full world for explanation; individual agents have limited sensing.';
 document.getElementById('message-note').textContent='Arrows show packets arriving from the previous action, connecting current agent positions for readability. Messages contain sender position and velocity. Arrows disappear on silent steps; cached messages expire after five steps. A recurrent actor can remember prior observations.';
-document.getElementById('packet-note').textContent=`Each directed packet contains ${data.bytes_per_packet} payload bytes, excluding headers.`;
+document.getElementById('packet-note').textContent=data.packet_description??`Each directed packet contains ${data.bytes_per_packet} payload bytes, excluding headers.`;
 const panels=data.runs.map(run=>{
  const panel=document.createElement('section');panel.className='panel';
  const title=document.createElement('h2');title.textContent=run.label??names[run.schedule];panel.append(title);

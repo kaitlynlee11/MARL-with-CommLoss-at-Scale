@@ -157,7 +157,7 @@ def evaluate_and_verify(directory, seed, baseline, initializer, episodes):
     return result
 
 
-def aggregate(root, rows, seeds, smoke=False):
+def aggregate(root, rows, seeds, smoke=False, evaluation_episodes=200):
     keys = [r["training_seed"] for r in rows]
     if len(keys) != len(set(keys)) or not set(keys).issubset(seeds):
         raise ValueError("Unexpected or repeated training seed")
@@ -188,7 +188,7 @@ def aggregate(root, rows, seeds, smoke=False):
              "Targets: final-step success strictly above 90% AND mean attempted directed packets strictly below 120 per 100-step episode. Both targets use point estimates. Traffic is an episode average, not a hard cap on individual episodes.", "",
              "Three agents, three static landmarks, zero communication loss, pairwise radial agent-start and landmark separation >=0.4, sensing radius 0.6 and coverage radius 0.1. Episodes run all 100 steps; collisions are recorded without terminating episodes. Collision step rate is the fraction of steps with any overlapping agent pair. This matches the corrected baseline workflow.", "",
              "Each seed warm-starts its own full-communication baseline actor (8,960,000 baseline training steps); movement and transmission then learn jointly with a fresh critic and optimizer. Additional adaptive steps are reported separately. Shared base task-return scoring matches the baselines (legacy-distance-v0); adaptive shaping rewards differ. This is not a comparison at equal training compute.", "",
-             "Validation uses 200 batched scenarios (seed 100000). Passing validation triggers separate 200-episode original-environment confirmation (500000-500199). Training stops on confirmed targets or its step ceiling. Final frozen-policy evaluation uses the baseline-matched 200 scenarios (400000-400199); held-out results never select or tune checkpoints. A confirmation pass does not guarantee a held-out pass.", "",
+             f"Validation uses 200 batched scenarios (seed 100000). Passing validation triggers separate 200-episode original-environment confirmation (500000-500199). Training stops on confirmed targets or its step ceiling. Final frozen-policy evaluation uses the baseline-matched {evaluation_episodes} scenarios (400000-{400000 + evaluation_episodes - 1}); held-out results never select or tune checkpoints. A confirmation pass does not guarantee a held-out pass.", "",
              "| Completed seeds | Success mean | Success seed SD | Mean packets/episode | Collision step rate | Both targets on held-out |",
              "| --- | --- | --- | --- | --- | --- |"]
     if rows:

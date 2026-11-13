@@ -29,7 +29,7 @@ def child(command, logfile):
 def train_condition(label, schedule, root, args):
     directory = root / label
     directory.mkdir()
-    common = ["--schedule", schedule, "--period", "5", "--min-landmark-distance", str(args.min_landmark_distance), "--min-agent-distance", str(args.min_agent_distance),
+    common = ["--communication-mode", "legacy", "--schedule", schedule, "--period", "5", "--min-landmark-distance", str(args.min_landmark_distance), "--min-agent-distance", str(args.min_agent_distance),
               "--seed", str(args.training_seed), "--threads", "1", "--recurrent", "--hidden", "64",
               "--eval-every", "50", "--no-early-stop", "--coverage-bonus", "1", "--potential-scale", "5"]
     initial = directory / "initial"

@@ -35,6 +35,10 @@ class CollisionVectorSpread(VectorSpread):
             self.pos[ids]=spaced_agents(self.pos[ids],self.rng,self.min_agent_distance)
             self.cache[ids]=0
             self.age[ids]=self.ttl+1
+            if self.landmark_channel is not None:
+                reset_mask=np.zeros(self.batch,dtype=bool)
+                reset_mask[ids]=True
+                self.landmark_channel.reset(reset_mask)
             self.steps[ids]=0
             failed=self.diagnostics()['collision_pairs']>0
             pending &= failed

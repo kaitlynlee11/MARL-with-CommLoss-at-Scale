@@ -158,6 +158,45 @@ class Handler(BaseHTTPRequestHandler):
             content_type = ("text/html; charset=utf-8" if filename.endswith(".html") else
                             "application/json; charset=utf-8" if filename.endswith(".json") else
                             "text/csv; charset=utf-8" if filename.endswith(".csv") else "text/plain; charset=utf-8")
+        elif route in ("/teams", "/teams/", "/teams/progress.html", "/teams/report.md",
+                       "/teams/per-seed.csv", "/teams/summary.json", "/teams/status.json"):
+            filename = route.rsplit("/", 1)[-1]
+            if filename not in ("report.md", "per-seed.csv", "summary.json", "status.json"):
+                filename = "progress.html"
+            path = REPO / "results/scheduler-team-sizes-zero-loss-20261111" / filename
+            if not path.exists():
+                self.send_error(404)
+                return
+            data = path.read_bytes()
+            content_type = ("text/html; charset=utf-8" if filename.endswith(".html") else
+                            "application/json; charset=utf-8" if filename.endswith(".json") else
+                            "text/csv; charset=utf-8" if filename.endswith(".csv") else "text/plain; charset=utf-8")
+        elif route in ("/ablation", "/ablation/", "/ablation/progress.html", "/ablation/report.md",
+                       "/ablation/per-seed.csv", "/ablation/summary.json", "/ablation/status.json"):
+            filename = route.rsplit("/", 1)[-1]
+            if filename not in ("report.md", "per-seed.csv", "summary.json", "status.json"):
+                filename = "progress.html"
+            path = REPO / "results/adaptive-communication-ablation-20261112" / filename
+            if not path.exists():
+                self.send_error(404)
+                return
+            data = path.read_bytes()
+            content_type = ("text/html; charset=utf-8" if filename.endswith(".html") else
+                            "application/json; charset=utf-8" if filename.endswith(".json") else
+                            "text/csv; charset=utf-8" if filename.endswith(".csv") else "text/plain; charset=utf-8")
+        elif route in ("/warm-none", "/warm-none/", "/warm-none/progress.html", "/warm-none/report.md",
+                       "/warm-none/per-seed.csv", "/warm-none/summary.json", "/warm-none/status.json"):
+            filename = route.rsplit("/", 1)[-1]
+            if filename not in ("report.md", "per-seed.csv", "summary.json", "status.json"):
+                filename = "progress.html"
+            path = REPO / "results/warm-no-communication-15-seeds-20261112" / filename
+            if not path.exists():
+                self.send_error(404)
+                return
+            data = path.read_bytes()
+            content_type = ("text/html; charset=utf-8" if filename.endswith(".html") else
+                            "application/json; charset=utf-8" if filename.endswith(".json") else
+                            "text/csv; charset=utf-8" if filename.endswith(".csv") else "text/plain; charset=utf-8")
         elif route in ("/", "/progress.html"):
             data = (REPO / "progress.html").read_bytes()
             content_type = "text/html; charset=utf-8"

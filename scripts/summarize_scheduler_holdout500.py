@@ -206,6 +206,8 @@ def main():
     variance_report += ["","Full precision and all 60 seed/group comparisons: `results/scheduler-heldout500-20261112/within-seed-variance-200-vs-500.csv`. Policy-level summaries: `results/scheduler-heldout500-20261112/variance-summary.csv`.",""]
     atomic_text(REPO / "docs/scheduler-holdout-500-variance-comparison.md","\n".join(variance_report))
     atomic_text(ROOT / "variance-comparison.md","\n".join(variance_report))
+    from add_baseline_variance_comparison import main as add_baselines
+    add_baselines()
     write_json(ROOT / "verification.json",{"passed":True,"training_seeds":15,"heldout_scenarios_per_seed":500,
         "new_rollouts":13500,"adaptive_episodes":7500,"disabled_episodes":7500,"warm_none_episodes":7500,
         "baseline_none_reference_episodes":7500,"old_outcomes_preserved":True,"scenario_pairing_verified":True,
